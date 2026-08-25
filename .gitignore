@@ -1,0 +1,28 @@
+# Build
+build/
+.gradle/
+out/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Distribution (don't commit jars; release via GitHub Releases)
+dist/
+
+# Local tool configs
+.codefuse/
+
+# Temporary plan files
+plan-*.md
+.claude/
+
+# Burp Montoya API is vendored under libs/ (kept in repo so a fresh clone
+# can build out-of-the-box, including offline/internal-network environments).
+target/

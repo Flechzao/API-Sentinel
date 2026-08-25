@@ -1,0 +1,182 @@
+# Sensitive information detection rules.
+#
+# Rule format (three-layer, inspired by gh0stkey/HaE — see docs/THIRD-PARTY.md):
+#   regex  — primary regex, broad match
+#   filter — optional exclusion regex: when the matched fragment also matches
+#            it, the finding is dropped (false-positive suppression)
+#   scope  — response | request | any (default: response)
+#
+# User-defined rules (~/.api-sentinel/sensitive-rules.json, JSON format
+# {name, regex, group}) are merged on top of these built-ins at load time.
+
+rules:
+  - name: JSON Web Token
+    regex: '(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,})'
+    group: Sensitive Information
+
+  - name: Cloud Key
+    regex: '(((access)(-|_)(key)(-|_)(id|secret))|(LTAI[a-z0-9]{12,20}))'
+    group: Sensitive Information
+
+  - name: Password Field
+    regex: '("|\x27)(|[\w]{1,10})([p](ass|wd|asswd|assword))(|[\w]{1,10})("|\x27)\s*[:=]\s*("|\x27)([^"'']+)("|\x27)'
+    group: Sensitive Information
+    filter: '(password=("|\x27)("|\x27)|password=("|\x27)(null|undefined|none|test|example|xxx+|\*+))'
+
+  - name: Authorization Header
+    regex: '((basic [a-z0-9=:_+/-]{5,100})|(bearer [a-z0-9_.=:_+/-]{5,100}))'
+    group: Sensitive Information
+    scope: any
+
+  - name: JDBC Connection
+    regex: '(jdbc:[a-z:]+://[a-z0-9.\-_:;=/@?,&]+)'
+    group: Sensitive Information
+
+  - name: Sensitive Field
+    regex: '("|\x27)([\w]{0,10})((key)|(secret)|(token)|(config)|(auth)|(access)|(admin))([\w]{0,10})("|\x27)\s*[:=]\s*("|\x27)([^"'']+)("|\x27)'
+    group: Sensitive Information
+    filter: '[:=]\s*("|\x27)("|\x27)|[:=]\s*("|\x27)(null|undefined|none|test|example|xxx+|\*+)("|\x27)'
+
+  - name: WeCom Key
+    regex: '((corp)(id|secret))'
+    group: Sensitive Information
+
+  - name: Chinese IDCard
+    regex: '(?<!\d)(\d{6}(18|19|20)\d{2}(0[1-9]|10|11|12)([0-2]\d|30|31)\d{3}(\d|X|x))(?!\d)'
+    group: Basic Information
+
+  - name: Chinese Mobile Number
+    regex: '(?<!\d)(?:\+?86)?1(?:3\d|4[5-9]|5[0-35-9]|6[5-7]|7[0-8]|8\d|9[1,8,9])\d{8}(?!\d)'
+    group: Basic Information
+
+  - name: Email
+    regex: '([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+    group: Basic Information
+    filter: '\.(jpe?g|png|gif|svg|ico|woff2?|ttf|eot|css|js|map)$'
+
+  - name: Internal IP Address
+    regex: '(?<!\d)((10\.\d{1,3}\.\d{1,3}\.\d{1,3})|(172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3})|(192\.168\.\d{1,3}\.\d{1,3}))(?!\d)'
+    group: Sensitive Information
+    filter: '(\.0\.0\.0$|255\.)'
+
+  - name: MAC Address
+    regex: '(?<![0-9A-Fa-f])([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f])'
+    group: Basic Information
+
+  - name: Windows File Path
+    regex: '([A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*)'
+    group: Sensitive Information
+
+  - name: Swagger UI
+    regex: '((swagger-ui.html)|("swagger":)|(Swagger UI)|(swaggerUi)|(swaggerVersion))'
+    group: Fingerprint
+
+  - name: Shiro RememberMe
+    regex: '(rememberMe=deleteMe|=deleteMe|rememberMe=)'
+    group: Fingerprint
+    scope: any
+
+  - name: Java Deserialization ViewState
+    regex: '(javax\.faces\.ViewState|__VIEWSTATE)'
+    group: Maybe Vulnerability
+    scope: any
+
+  - name: Passwd File Leak
+    regex: '(root:[x*]?:0:0:)'
+    group: Maybe Vulnerability
+
+  - name: Win.ini File Leak
+    regex: '(\[(fonts|mci extensions|extensions|files)\])'
+    group: Maybe Vulnerability
+
+  - name: Druid Monitor
+    regex: '(/druid/index\.html|druid/login\.html|DruidDataSource|com\.alibaba\.druid)'
+    group: Fingerprint
+    scope: any
+
+  - name: Spring Boot Actuator
+    regex: '(/actuator/(env|health|heapdump|mappings|configprops|beans|threaddump|metrics)["\x27\s)/])'
+    group: Fingerprint
+
+  - name: Vite DevMode
+    regex: '(@vite/client|__vite_ping|vite-dev-server)'
+    group: Fingerprint
+
+  - name: Source Map Leak
+    regex: '(sourceMappingURL=|\.js\.map[\s")\]])'
+    group: Maybe Vulnerability
+
+  - name: Ueditor
+    regex: '(ueditor\.(config|all)\.js|UEDITOR_HOME_URL)'
+    group: Fingerprint
+
+  - name: Upload Form
+    regex: '(<input[^>]{0,200}type=["\s]*file)'
+    group: Fingerprint
+
+  - name: Custom URL Scheme
+    regex: '([a-zA-Z][a-zA-Z0-9+.-]*://(?!http|https|ftp|mailto|tel|data|blob|file|git|ssh|jdbc)[^\s"<>]{5,})'
+    group: Fingerprint
+
+  - name: Debug Logic Parameters
+    regex: '((access=)|(adm=)|(admin=)|(alter=)|(cfg=)|(clone=)|(config=)|(create=)|(dbg=)|(debug=)|(delete=)|(disable=)|(edit=)|(enable=)|(exec=)|(execute=)|(grant=)|(load=)|(make=)|(modify=)|(rename=)|(reset=)|(root=)|(shell=)|(test=)|(toggl=))'
+    group: Maybe Vulnerability
+
+  - name: URL As A Value
+    regex: '(=(https?)(://|%3a%2f%2f))'
+    group: Maybe Vulnerability
+
+  # ======================== Cloud-Native Credentials ========================
+
+  - name: AWS Access Key ID
+    regex: '(AKIA[0-9A-Z]{16})'
+    group: Sensitive Information
+    scope: any
+
+  - name: AWS Secret Access Key
+    regex: '((?:aws_secret_access_key|aws_secret|secret_key)\s*[=:]\s*[A-Za-z0-9/+=]{40})'
+    group: Sensitive Information
+    scope: any
+
+  - name: GitHub Personal Access Token
+    regex: '(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})'
+    group: Sensitive Information
+    scope: any
+
+  - name: GitHub OAuth Token
+    regex: '(gho_[A-Za-z0-9]{36})'
+    group: Sensitive Information
+    scope: any
+
+  - name: GitLab Personal Access Token
+    regex: '(glpat-[A-Za-z0-9\-_]{20,})'
+    group: Sensitive Information
+    scope: any
+
+  - name: GCP API Key
+    regex: '(AIza[0-9A-Za-z_\-]{35})'
+    group: Sensitive Information
+    scope: any
+
+  - name: SSH Private Key
+    regex: '(-----BEGIN\s+(RSA|DSA|EC|OPENSSH)\s+PRIVATE\s+KEY-----)'
+    group: Sensitive Information
+
+  - name: Slack Token
+    regex: '(xox[bprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9\-]*)'
+    group: Sensitive Information
+    scope: any
+
+  - name: Stripe Secret Key
+    regex: '(sk_live_[0-9a-zA-Z]{24,})'
+    group: Sensitive Information
+    scope: any
+
+  - name: Azure Storage Connection String
+    regex: '(DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{40,})'
+    group: Sensitive Information
+
+  - name: Heroku API Key
+    regex: '(heroku[_-]?(api[_-]?)?key\s*[=:]\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+    group: Sensitive Information
+    scope: any
