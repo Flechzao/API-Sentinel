@@ -11,6 +11,14 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+// Windows 上 javac 默认按平台 ANSI 编码（native.encoding）读源码，而本仓库源码是 UTF-8：
+// ChatMessagePanel 的 emoji 字符字面量（'✅' '✓' '▶'）和 CsvExporter 的 U+FEFF
+// 会直接编译失败（illegal character / unclosed character literal）。
+// 显式声明源码编码，保证 Windows 与 Linux/macOS 行为一致。
+tasks.withType<JavaCompile>().configureEach {
+    options.encoding = "UTF-8"
+}
+
 repositories {
     mavenCentral()
 }
