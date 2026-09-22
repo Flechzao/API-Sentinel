@@ -61,8 +61,23 @@ jobs:
 
       - name: Build fat jar (Windows)
         if: runner.os == 'Windows'
-        shell: cmd
-        run: gradlew.bat --no-daemon --console=plain shadowJar
+        shell: pwsh
+        run: |
+          & .\gradlew.bat --no-daemon --console=plain shadowJar 2>&1 | Tee-Object -FilePath gradle-win.log
+          exit $LASTEXITCODE
+
+      # 把 Windows 构建失败的最后 40 行塞进一个 annotation：job 日志需要 admin 权限
+      # 才能下载，而 annotation 是公开可读的，方便在没有 token 的环境里定位问题。
+      - name: Surface Windows build failure as annotation
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path gradle-win.log) {
+            $tail = (Get-Content gradle-win.log -Tail 40) -join "%0A"
+            Write-Output "::error title=Windows shadowJar failure::$tail"
+          } else {
+            Write-Output "::error title=Windows shadowJar failure::gradle-win.log was not created"
+          }
 
       - name: Rename jar with platform suffix
         shell: bash
