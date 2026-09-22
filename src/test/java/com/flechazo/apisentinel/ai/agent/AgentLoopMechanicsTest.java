@@ -1,6 +1,8 @@
 package com.flechazo.apisentinel.ai.agent;
 
-import com.flechazo.apisentinel.ai.pipeline.PipelineConfig;
+import com.flechazo.apisentinel.ai.agent.tool.AgentTool;
+import com.flechazo.apisentinel.ai.agent.tool.AgentToolRegistry;
+import com.flechazo.apisentinel.ai.pipeline.AnalysisConfig;
 import com.flechazo.apisentinel.ai.pipeline.PipelineResult;
 import com.flechazo.apisentinel.ai.provider.ChatMessage;
 import com.flechazo.apisentinel.ai.provider.LlmProvider;
@@ -139,8 +141,8 @@ class AgentLoopMechanicsTest {
         return e;
     }
 
-    private static PipelineConfig config() {
-        return new PipelineConfig(true, 10, true, false,
+    private static AnalysisConfig config() {
+        return new AnalysisConfig(true, 10, true, false,
                 "", "A", "", "B", 150_000, true,
                 false, false, false, false, 0, false, false);
     }
@@ -362,9 +364,13 @@ class AgentLoopMechanicsTest {
             // FAILED sends did not count as verified.
             int rejectedSubmitIdx = cb.toolResultTools.indexOf("submit_report");
             assertThat(rejectedSubmitIdx).isGreaterThanOrEqualTo(0);
+            // P2-2: Gate 2 now binds to finding count, not generate_payloads.
+            // 1 finding claimed, 2 generated, 0 verified → required = min(max(2,1),5) = 2,
+            // so the rejection demands "at least 2" verifications and reports
+            // "only 0 payload(s) were verified".
             assertThat(cb.toolResultBodies.get(rejectedSubmitIdx))
-                    .contains("generated 2 test payload")
-                    .contains("only verified 0");
+                    .contains("only 0 payload(s) were verified")
+                    .contains("at least 2");
 
             // The suspected verdict was never accepted — the final verdict is
             // the evidence-so-far fallback (risk LOW), not the MEDIUM report.
@@ -379,5 +385,157 @@ class AgentLoopMechanicsTest {
         } finally {
             agentLoop.shutdown();
         }
+    }
+
+    /** P2-2 B1 wiring: when the agent never calls submit_report (script
+     *  exhausts → future fails → fallback), buildFallbackResult reconstructs
+     *  a verdict from thinking text. inferRiskFromEvidence sees "sql注入" and
+     *  returns HIGH, but confirmed is empty. Pre-B1 the report would be
+     *  HIGH-with-empty-confirmed (violating the "HIGH requires a surviving
+     *  confirmed" invariant). B1 routes the reconstruction through
+     *  VerdictValidator.validate, whose Phase 5 downgrades HIGH→MEDIUM.
+     *  This test pins the WIRING (that buildFallbackResult actually calls
+     *  validate), not just the validate contract — the contract alone
+     *  (tested in VerdictValidatorP08Test) wouldn't catch a regression that
+     *  removes the validate call from the fallback path. */
+    @Test
+    void fallbackReconstruction_highRiskFromThinkingText_downgradedByValidate() throws Exception {
+        FakeLlmProvider provider = new FakeLlmProvider();
+        provider.script(
+                // turn 1: heuristic_scan (Gate 1 satisfied)
+                toolCalls(null, call("heuristic_scan", "{}")),
+                // turn 2: pure thinking text carrying a HIGH keyword — adds
+                // "sql注入" to stageDescriptions, no submit_report call.
+                new LlmResponse("分析发现 sql注入 疑似线索，尚未验证",
+                        10, 10, 0, "fake", LlmResponse.FinishReason.COMPLETE,
+                        null, List.of(), null, null)
+                // turn 3: script exhausted → FakeLlmProvider fails the future
+                // → AgentLoop catch(Throwable) → buildFallbackResult.
+        );
+        AgentLoop agentLoop = loop(provider);
+        RecordingCallback cb = new RecordingCallback();
+        try {
+            PipelineResult result = agentLoop.execute(entry(), cb).get(60, TimeUnit.SECONDS);
+
+            // B1 wiring: the reconstructed HIGH is downgraded — overall_risk
+            // is NOT HIGH (Phase 5: HIGH + no surviving confirmed → MEDIUM).
+            assertThat(result.verdict()).isNotNull();
+            assertThat(result.verdict().overallRisk())
+                    .as("fallback HIGH-with-no-confirmed must be downgraded by B1")
+                    .isNotEqualTo("HIGH");
+            // The salvage note (B1 labels the reconstruction as unverified).
+            assertThat(result.verdict().summary()).contains("未完成验证");
+        } finally {
+            agentLoop.shutdown();
+        }
+    }
+
+    /** P2-3: Agent tool results sent to the LLM must be wrapped in the
+     *  per-run nonce fence — pre-P2-3 they entered the conversation as raw
+     *  text, so an attacker response body (send_request), DOM dump
+     *  (browser_render) or grep hit (grep_repo) could carry prompt injection
+     *  with no demarcation. A1 fixed Pipeline's FinalVerdictPrompt but left
+     *  the Agent loop's tool results unfenced; this pins the wiring. */
+    @Test
+    void toolResultsSentToLlmAreFencedWithNonce() throws Exception {
+        FakeLlmProvider provider = new FakeLlmProvider();
+        provider.script(
+                // turn 0: heuristic_scan tool call (satisfies Gate 1)
+                toolCalls(null, call("heuristic_scan", "{}")),
+                // turn 1: submit a SAFE verdict so the loop ends cleanly
+                toolCalls(null, call("submit_report", safeVerdict()))
+        );
+        AgentLoop agentLoop = loop(provider);
+        RecordingCallback cb = new RecordingCallback();
+        try {
+            agentLoop.execute(entry(), cb).get(60, TimeUnit.SECONDS);
+
+            // System prompt (call 0) carries the fence instruction.
+            List<ChatMessage> call0 = provider.messagesOf(0);
+            assertThat(call0.get(0).content()).contains("安全围栏");
+            assertThat(call0.get(0).content()).contains("UNTRUSTED[");
+
+            // The tool result bound for the LLM (call 1's messages) is
+            // fenced: a tool-result message carries the nonce-bearing marker.
+            List<ChatMessage> call1 = provider.messagesOf(1);
+            String fencedToolResult = call1.stream()
+                    .map(ChatMessage::content)
+                    .filter(c -> c != null && c.contains("UNTRUSTED["))
+                    .filter(c -> c.contains("START ===") && c.contains("END ==="))
+                    .findFirst().orElse(null);
+            assertThat(fencedToolResult)
+                    .as("tool result sent to the LLM must carry the nonce fence markers")
+                    .isNotNull();
+
+            // The UI callback got the RAW (unfenced) result — only the
+            // LLM-bound message is wrapped, the UI shows clean output.
+            assertThat(cb.toolResultBodies)
+                    .as("UI callback must receive the raw tool result, not the fence-wrapped one")
+                    .allSatisfy(b -> assertThat(b).doesNotContain("UNTRUSTED["));
+        } finally {
+            agentLoop.shutdown();
+        }
+    }
+
+    /** P2-2 concurrency invariant: stateful/HTTP/LLM tools mutate shared
+     *  state (the payloadResults pool, session state) and must NEVER
+     *  parallelise within a batch — otherwise the shared
+     *  SendRequestTool.payloadResults + citedExecutionIndex O(1) lookups
+     *  would race. Only read-only tools parallelise. Pins this so a future
+     *  "let's parallelise send_request" change can't silently reintroduce
+     *  the race. */
+    @Test
+    void statefulToolsAreNotParallelizable_pinsConcurrencySafety() {
+        // Registry with stubs whose isReadOnly() reflects each tool's real
+        // classification — drives the metadata-based parallel decision in
+        // AgentLoop.canParallelize (no longer a hardcoded name set).
+        AgentToolRegistry reg = readOnlyStubRegistry(
+                "send_request", "chain_hunter", "submit_report",
+                "verify_boolean_blind", "verify_timing_blind",
+                "test_auth_bypass", "active_probe", "generate_payloads",
+                "analyze_traffic", "waf_bypass_retry",
+                "read_file", "grep_repo");
+
+        // Stateful / HTTP / LLM tools must NOT parallelise.
+        for (String tool : new String[]{"send_request", "chain_hunter",
+                "submit_report", "verify_boolean_blind", "verify_timing_blind",
+                "test_auth_bypass", "active_probe", "generate_payloads",
+                "analyze_traffic", "waf_bypass_retry"}) {
+            assertThat(AgentLoop.canParallelize(java.util.List.of(
+                    new ToolCall("c1", tool, "{}")), reg))
+                    .as("stateful tool %s must not parallelise", tool)
+                    .isFalse();
+        }
+        // Read-only tools ARE parallelisable.
+        assertThat(AgentLoop.canParallelize(java.util.List.of(
+                new ToolCall("c1", "read_file", "{}"),
+                new ToolCall("c2", "grep_repo", "{}")), reg)).isTrue();
+        // A mix (one read + one stateful) must NOT parallelise.
+        assertThat(AgentLoop.canParallelize(java.util.List.of(
+                new ToolCall("c1", "read_file", "{}"),
+                new ToolCall("c2", "send_request", "{}")), reg)).isFalse();
+    }
+
+    /** Builds a registry of stub tools whose {@link AgentTool#isReadOnly()}
+     *  returns true for the known read-only tool names and false otherwise,
+     *  mirroring the real tool implementations. ToolContext is null —
+     *  canParallelize only resolves the tool and reads its metadata. */
+    private static AgentToolRegistry readOnlyStubRegistry(String... names) {
+        java.util.Set<String> readOnly = java.util.Set.of(
+                "read_file", "grep_repo", "search_source_code", "search_traffic",
+                "find_definition", "find_callers", "fingerprint_components",
+                "heuristic_scan", "list_sessions", "map_sibling_endpoints");
+        AgentToolRegistry reg = new AgentToolRegistry(null);
+        for (String n : names) {
+            boolean ro = readOnly.contains(n);
+            reg.register(new AgentTool() {
+                @Override public String name() { return n; }
+                @Override public String description() { return "stub"; }
+                @Override public com.google.gson.JsonObject inputSchema() { return new com.google.gson.JsonObject(); }
+                @Override public String execute(String argumentsJson) { return "{}"; }
+                @Override public boolean isReadOnly() { return ro; }
+            });
+        }
+        return reg;
     }
 }

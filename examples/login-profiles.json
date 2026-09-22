@@ -1,0 +1,41 @@
+{
+  "profiles": [
+    {
+      "name": "生产环境-管理员",
+      "loginUrl": "https://app.example.com/login",
+      "username": "admin@example.com",
+      "password": "your-password-here",
+      "strategy": "AUTO",
+      "successIndicators": ["/dashboard"],
+      "persistCookies": true
+    },
+    {
+      "name": "测试环境-普通用户",
+      "loginUrl": "https://test.example.com/login",
+      "username": "user@test.com",
+      "password": "test-password",
+      "strategy": "CUSTOM_FORM",
+      "formSelectors": {
+        "username": "#email",
+        "password": "#password",
+        "submit": ".login-btn"
+      },
+      "successIndicators": ["/home", "/user"],
+      "persistCookies": true
+    },
+    {
+      "name": "SSO 登录示例",
+      "loginUrl": "https://sso.company.com/auth",
+      "username": "your-username",
+      "password": "your-password",
+      "strategy": "SSO_BUC",
+      "formSelectors": {
+        "username": "input[name='login']",
+        "password": "input[name='password']",
+        "submit": "button.login-submit"
+      },
+      "successIndicators": ["/app/main"],
+      "persistCookies": true
+    }
+  ]
+}

@@ -52,12 +52,44 @@ public class SessionInfo {
         return sj.toString();
     }
 
-    /** Short display label, e.g. "Session A (JSESSIONID=abc1...)" */
+    /**
+     * Build a {@link SessionCredentials} bundle from this session's
+     * stored cookie map and auth headers. Used by the auth test executor
+     * to swap both credential channels during the session-exchange test.
+     */
+    public SessionCredentials toCredentials() {
+        return new SessionCredentials(cookieMap, authHeaders);
+    }
+
+    /**
+     * Multi-line credential summary for UI display and logs. Shows both
+     * Cookie and auth-header channels so Bearer-only sessions don't look
+     * empty. Format:
+     * <pre>
+     *   Cookie: key1=val1; key2=val2
+     *   Authorization: Bearer eyJ...
+     * </pre>
+     * Omits empty channels. Returns "(no credentials)" when both are empty.
+     */
+    public String toCredentialSummary() {
+        StringBuilder sb = new StringBuilder();
+        if (!cookieMap.isEmpty()) {
+            sb.append("Cookie: ").append(toCookieHeaderValue());
+        }
+        if (!authHeaders.isEmpty()) {
+            if (sb.length() > 0) sb.append("\n");
+            StringJoiner sj = new StringJoiner("\n");
+            authHeaders.forEach((k, v) -> sj.add(k + ": " + v));
+            sb.append(sj);
+        }
+        return sb.length() > 0 ? sb.toString() : "(no credentials)";
+    }
+
+    /** Short display label, e.g. "Session A (Authorization=Bearer ey...)".
+     *  Pre-rework this only previewed cookie values, showing a fingerprint
+     *  hash for Bearer-only sessions which was useless. */
     public String shortLabel(String label) {
-        String preview = cookieMap.entrySet().stream()
-                .filter(e -> e.getValue().length() > 8)
-                .map(e -> e.getKey() + "=" + e.getValue().substring(0, 6) + "...")
-                .findFirst().orElse(fingerprint.substring(0, Math.min(8, fingerprint.length())));
+        String preview = new SessionCredentials(cookieMap, authHeaders).preview();
         return label + " (" + preview + ")";
     }
 }

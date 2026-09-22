@@ -87,7 +87,7 @@ public class LearnedRuleEngine {
                         if (loaded != null) falsePositives.addAll(loaded);
                     }
                     compilePatterns();
-                    logger.info("[规则学习] 加载 %d 条规则 + %d 条误报抑制", rules.size(), falsePositives.size());
+                    logger.debug("[规则学习] 加载 %d 条规则 + %d 条误报抑制", rules.size(), falsePositives.size());
                     return;
                 }
             }

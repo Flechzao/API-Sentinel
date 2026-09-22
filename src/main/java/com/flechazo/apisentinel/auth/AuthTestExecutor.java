@@ -13,24 +13,52 @@ import java.util.regex.Pattern;
 
 /**
  * Executes authorization bypass tests using whole-header replacement strategy.
- * Tests multiple representative requests from session A (not just the last),
- * and adds an IDOR round that substitutes a resource ID observed in session B's
- * history while keeping session A's own auth — catching horizontal IDOR that a
- * pure session-swap would miss.
+ *
+ * <p>Auth-bypass rework (v1.1.0): expanded from path-only IDOR scanning to
+ * also cover query-parameter and JSON-body resource IDs, added session B
+ * expiry pre-check (so a 401 on session B isn't silently counted as
+ * "auth works"), added request rate-limiting to avoid WAF / account
+ * lockout, and added method-diversified template picking so a session
+ * that only did GETs doesn't miss POST/PUT-level bypass.
  */
 /** 越权测试执行器——多 session 交换 + IDOR 替换 + 未授权访问，Jaccard 相似度判定。 */
 public class AuthTestExecutor {
 
     private static final Logger log = Logger.getLogger(AuthTestExecutor.class.getName());
-    private static final Set<String> AUTH_HEADERS = Set.of(
-            "cookie", "authorization", "x-token", "x-access-token",
-            "x-csrf-token", "x-xsrf-token", "x-api-key", "x-auth-token");
+    // P3-10: unified to single source of truth
+    private static final Set<String> AUTH_HEADERS = com.flechazo.apisentinel.util.AuthHeaders.AUTH_HEADERS;
 
     /** How many distinct-path requests from session A to test. */
     private static final int MAX_TEMPLATES = 3;
 
+    /**
+     * Minimum delay between consecutive requests during the auth test
+     * (ms). A small gap reduces the chance of triggering rate-limit /
+     * WAF / account lockout on the target, which would otherwise turn
+     * every subsequent round into a 429/403 and be mis-counted as
+     * "auth enforced". 150ms is slow enough for most WAFs to see the
+     * requests as distinct, fast enough that a full 15-round test still
+     * completes in under 3 seconds.
+     */
+    private static final int INTER_REQUEST_DELAY_MS = 150;
+
     private static final Pattern NUMERIC_ID = Pattern.compile("/(\\d{2,})(?=/|$|[?])");
     private static final Pattern UUID_ID = Pattern.compile("/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?=/|$|[?])");
+
+    /** Common query/body parameter names that carry resource IDs.
+     *  Matched case-insensitively against parameter keys. */
+    private static final List<String> ID_PARAM_PATTERNS = List.of(
+            "id", "uid", "user_id", "userid", "user-id",
+            "account_id", "accountid", "account-id",
+            "order_id", "orderid", "order-id",
+            "project_id", "projectid", "project-id",
+            "resource_id", "resourceid", "resource-id",
+            "item_id", "itemid", "item-id",
+            "doc_id", "docid", "doc-id",
+            "file_id", "fileid", "file-id",
+            "record_id", "recordid", "record-id",
+            "obj", "pk", "uuid"
+    );
 
     private final MontoyaApi api;
     /** Optional LLM for gray-zone (SUSPICIOUS) arbitration; null = disabled. */
@@ -49,6 +77,125 @@ public class AuthTestExecutor {
         this.aiArbitrationEnabled = aiArbitrationEnabled;
     }
 
+    /**
+     * Execute pairwise auth bypass testing across multiple sessions.
+     * For N sessions, runs C(N,2) pair comparisons and aggregates the results.
+     * The overall verdict is the worst (most vulnerable) across all pairs.
+     *
+     * @param sessions list of configured sessions (2 or more)
+     * @param targetDomain the API's domain for session filtering; empty = no filter
+     * @return aggregated result with per-pair details in evidence
+     */
+    public AuthTestResult executePairwise(java.util.List<SessionConfig> sessions, String targetDomain) {
+        // Filter sessions by domain
+        java.util.List<SessionConfig> applicable = sessions.stream()
+                .filter(s -> s.matchesDomain(targetDomain))
+                .toList();
+
+        if (applicable.size() < 2) {
+            return AuthTestResult.skipped("仅发现 " + applicable.size()
+                    + " 个适用于域名 " + (targetDomain.isEmpty() ? "(全部)" : targetDomain)
+                    + " 的会话（需要至少 2 个）");
+        }
+
+        // Run pairwise comparisons
+        java.util.List<AuthTestResult> pairResults = new java.util.ArrayList<>();
+        for (int i = 0; i < applicable.size(); i++) {
+            for (int j = i + 1; j < applicable.size(); j++) {
+                SessionConfig a = applicable.get(i);
+                SessionConfig b = applicable.get(j);
+                SessionInfo infoA = a.toSessionInfo();
+                SessionInfo infoB = b.toSessionInfo();
+
+                // Identify auth params for this pair
+                java.util.List<String> authCookieKeys = AuthParamIdentifier.identifyAuthCookieKeys(infoA, infoB);
+                java.util.List<String> authHeaderKeys = AuthParamIdentifier.identifyAuthHeaders(infoA, infoB);
+
+                if (authCookieKeys.isEmpty() && authHeaderKeys.isEmpty()) {
+                    pairResults.add(AuthTestResult.skipped(
+                            a.label() + " ↔ " + b.label() + ": 无差异鉴权参数"));
+                    continue;
+                }
+
+                AuthTestResult pairResult = execute(infoA, infoB, authCookieKeys, authHeaderKeys);
+                // Determine test type from level + group metadata
+                String testType = determineTestType(a, b);
+                // Override labels with user-configured labels + test type annotation
+                pairResults.add(new AuthTestResult(
+                        pairResult.verdict(), pairResult.vulnType(), pairResult.identifiedAuthParams(),
+                        a.shortLabel(), b.shortLabel(),
+                        pairResult.maxSimilarity(),
+                        "[" + testType + "] " + a.label() + " ↔ " + b.label() + ": " + pairResult.evidence(),
+                        pairResult.rounds()));
+            }
+        }
+
+        return aggregatePairResults(pairResults, applicable);
+    }
+
+    /**
+     * Determine the test type label for a pair of sessions based on their
+     * privilege level and group/tenant metadata:
+     * <ul>
+     *   <li>Both levels set + different → "垂直越权" (vertical escalation)</li>
+     *   <li>Same level + different group → "水平越权" (horizontal IDOR)</li>
+     *   <li>Different level + different group → "跨租户越权"</li>
+     *   <li>Neither set → "越权" (generic)</li>
+     * </ul>
+     * The agent sees this annotation in the evidence string and can use it
+     * to frame its verdict reasoning (e.g. "horizontal IDOR confirmed" vs
+     * "vertical privilege escalation confirmed").
+     */
+    private static String determineTestType(SessionConfig a, SessionConfig b) {
+        String levelA = a.level();
+        String levelB = b.level();
+        String groupA = a.group();
+        String groupB = b.group();
+
+        boolean levelsDiffer = !levelA.isEmpty() && !levelB.isEmpty() && !levelA.equals(levelB);
+        boolean groupsDiffer = !groupA.isEmpty() && !groupB.isEmpty() && !groupA.equals(groupB);
+
+        if (levelsDiffer && groupsDiffer) return "跨租户越权";
+        if (levelsDiffer) return "垂直越权";
+        if (groupsDiffer) return "水平越权";
+        if (!levelA.isEmpty() && !levelB.isEmpty() && levelA.equals(levelB)) return "水平越权";
+        return "越权";
+    }
+
+    /** Aggregate multiple pair results into a single overall result. */
+    private AuthTestResult aggregatePairResults(java.util.List<AuthTestResult> pairResults,
+                                                 java.util.List<SessionConfig> sessions) {
+        if (pairResults.isEmpty()) {
+            return AuthTestResult.skipped("无可测试的会话对");
+        }
+
+        // Find worst verdict
+        AuthTestResult.AuthVerdict worstVerdict = AuthTestResult.AuthVerdict.SAFE;
+        String worstVulnType = "NONE";
+        double maxSim = 0;
+        java.util.List<AuthTestRound> allRounds = new java.util.ArrayList<>();
+        StringBuilder evidence = new StringBuilder();
+        java.util.List<String> allAuthParams = new java.util.ArrayList<>();
+
+        for (AuthTestResult pr : pairResults) {
+            if (pr.verdict() != AuthTestResult.AuthVerdict.SKIPPED
+                    && pr.verdict().ordinal() > worstVerdict.ordinal()) {
+                worstVerdict = pr.verdict();
+                worstVulnType = pr.vulnType();
+            }
+            if (pr.maxSimilarity() > maxSim) maxSim = pr.maxSimilarity();
+            allRounds.addAll(pr.rounds());
+            evidence.append(pr.evidence()).append("\n");
+            allAuthParams.addAll(pr.identifiedAuthParams());
+        }
+
+        String sessionSummary = sessions.size() + " 个会话, " + pairResults.size() + " 对比较";
+        return new AuthTestResult(worstVerdict, worstVulnType,
+                allAuthParams.stream().distinct().toList(),
+                sessionSummary, "",
+                maxSim, evidence.toString().trim(), allRounds);
+    }
+
     public AuthTestResult execute(SessionInfo sessionA, SessionInfo sessionB,
                                   List<String> authCookieKeys, List<String> authHeaderKeys) {
         if (sessionA.getRequests().isEmpty()) {
@@ -61,14 +208,23 @@ public class AuthTestExecutor {
         String bestBaselineRaw = "";
 
         try {
-            // Pick up to MAX_TEMPLATES distinct-path templates from session A
-            // (newest first) so the test covers more than one endpoint.
+            // Pre-check: verify session B is actually alive. A 401/403 on
+            // session B's own request means its token is expired, and any
+            // swap round would then show low similarity → false SAFE.
+            if (!verifySessionAlive(sessionB)) {
+                return AuthTestResult.skipped("Session B 的凭证已过期（请求返回 401/403），请刷新 token 后重试");
+            }
+
+            // Pick up to MAX_TEMPLATES distinct-method+path templates from
+            // session A (newest first) so the test covers more than one
+            // HTTP method on the same endpoint.
             List<HttpRequest> templates = pickTemplates(sessionA);
 
             boolean anyBaselineFailed = true;
             for (HttpRequest template : templates) {
                 HttpRequestResponse baselineResp = api.http().sendRequest(template);
                 HttpResponse baselineResponse = baselineResp.response();
+                rateLimitDelay();
                 if (baselineResponse == null) continue;
                 anyBaselineFailed = false;
 
@@ -88,7 +244,7 @@ public class AuthTestExecutor {
                     bestBaselineRaw = baselineResponse.toString();
                 }
 
-                double idorSim = runIdorRound(template, baselineResponse, sessionB, rounds);
+                double idorSim = runIdorRound(template, baselineResponse, sessionA, sessionB, rounds);
                 if (idorSim > maxSimilarity) {
                     maxSimilarity = idorSim; bestRoundDesc = "IDOR 资源ID替换";
                     bestBaselineRaw = baselineResponse.toString();
@@ -99,7 +255,8 @@ public class AuthTestExecutor {
                 return AuthTestResult.skipped("All baseline requests failed (no response)");
             }
 
-            AuthTestResult.AuthVerdict verdict = ResponseComparator.verdictFromSimilarity(maxSimilarity);
+            int baselineBodyLen = ResponseComparator.bodyLengthOf(bestBaselineRaw);
+            AuthTestResult.AuthVerdict verdict = ResponseComparator.verdictFromSimilarity(maxSimilarity, baselineBodyLen);
             String vulnType = determineVulnType(rounds, maxSimilarity);
             StringBuilder evidence = new StringBuilder(String.format(
                     "最大相似度: %.1f%% [%s], 共执行 %d 轮测试 (跨 %d 个端点)",
@@ -140,16 +297,49 @@ public class AuthTestExecutor {
         }
     }
 
-    /** Distinct-path templates from session A, newest first, capped at MAX_TEMPLATES. */
+    /**
+     * Verify that a session's credentials are still valid by replaying
+     * the most recent request from its history. Returns false when the
+     * response is 401/403 — meaning the token expired between the time
+     * the session was captured and the time we're running the test.
+     *
+     * <p>Without this check, an expired session B would cause every
+     * swap round to return a login-redirect or 401, producing low
+     * similarity and a false "SAFE" verdict. Better to tell the user
+     * up-front that their token needs refreshing.
+     */
+    private boolean verifySessionAlive(SessionInfo session) {
+        List<ProxyHttpRequestResponse> reqs = session.getRequests();
+        if (reqs.isEmpty()) return true; // no history to replay, trust the caller
+        try {
+            HttpRequest recent = reqs.get(reqs.size() - 1).finalRequest();
+            HttpRequestResponse resp = api.http().sendRequest(recent);
+            rateLimitDelay();
+            if (resp.response() == null) return true; // network issue, don't blame the session
+            int status = resp.response().statusCode();
+            return status != 401 && status != 403;
+        } catch (Exception e) {
+            return true; // on error, don't block the test
+        }
+    }
+
+    /**
+     * Distinct-method+path templates from session A, newest first, capped
+     * at MAX_TEMPLATES. Pre-rework only the URL path was used as the
+     * dedup key, so a session that hit the same endpoint with GET and
+     * POST would only test one of them — missing method-specific bypass
+     * (common for REST APIs where GET is public but POST requires auth).
+     */
     private List<HttpRequest> pickTemplates(SessionInfo sessionA) {
         List<HttpRequest> out = new ArrayList<>();
-        Set<String> seenPaths = new LinkedHashSet<>();
+        Set<String> seenKeys = new LinkedHashSet<>();
         List<ProxyHttpRequestResponse> reqs = sessionA.getRequests();
         for (int i = reqs.size() - 1; i >= 0 && out.size() < MAX_TEMPLATES; i--) {
             try {
                 HttpRequest req = reqs.get(i).finalRequest();
                 String path = com.flechazo.apisentinel.util.UrlUtils.extractPath(req.url());
-                if (seenPaths.add(path)) out.add(req);
+                String key = req.method() + " " + path;
+                if (seenKeys.add(key)) out.add(req);
             } catch (Exception ignored) {}
         }
         if (out.isEmpty() && !reqs.isEmpty()) {
@@ -202,42 +392,128 @@ public class AuthTestExecutor {
     }
 
     /**
-     * IDOR round: keep session A's OWN auth, but substitute a resource ID in the
-     * path with one observed in session B's history (different user's resource).
-     * A high similarity to session A's baseline means session A can read session
-     * B's data — horizontal IDOR.
+     * IDOR round: keep session A's OWN auth, but substitute a resource ID
+     * found in the template (path / query / body) with one observed in
+     * session B's history (different user's resource). A high similarity
+     * to session A's baseline means session A can read session B's data
+     * — horizontal IDOR.
+     *
+     * <p>Pre-rework only URL-path IDs were scanned. Modern APIs more often
+     * pass resource IDs in query parameters ({@code ?user_id=123}) or
+     * JSON bodies ({@code {"orderId": 456}}). This rework covers all
+     * three channels.
      */
     private double runIdorRound(HttpRequest template, HttpResponse baseline,
-                                SessionInfo sessionB, List<AuthTestRound> rounds) {
-        String url = template.url();
-        String currentId = findFirstId(url);
-        if (currentId == null) return 0.0; // no resource ID to substitute
+                                SessionInfo sessionA, SessionInfo sessionB,
+                                List<AuthTestRound> rounds) {
+        double max = 0.0;
 
-        String altId = findAlternateId(sessionB, currentId);
-        if (altId == null || altId.equals(currentId)) {
-            // No alternate from session B; try a numeric increment as a last resort
-            if (currentId.matches("\\d+")) {
-                altId = String.valueOf(Long.parseLong(currentId) + 1);
-            } else {
-                return 0.0;
+        // Try path-based IDOR first (the common case)
+        String url = template.url();
+        String pathId = findFirstId(url);
+        if (pathId != null) {
+            String altId = findAlternateId(sessionB, pathId, extractPathPattern(url));
+            if (altId == null && pathId.matches("\\d+")) {
+                altId = String.valueOf(Long.parseLong(pathId) + 1);
+            }
+            if (altId != null && !altId.equals(pathId)) {
+                String newUrl = url.replace("/" + pathId, "/" + altId);
+                if (!newUrl.equals(url)) {
+                    try {
+                        HttpRequest idorReq = HttpRequest.httpRequest(
+                                template.httpService(), buildRawWithUrl(template, newUrl));
+                        max = Math.max(max, recordRound(idorReq, baseline,
+                                "IDOR 替换路径ID (" + pathId + "→" + altId + ", 保留A鉴权)", rounds));
+                    } catch (Exception ignored) {}
+                }
             }
         }
 
-        String newUrl = url.replace("/" + currentId, "/" + altId);
-        if (newUrl.equals(url)) return 0.0;
-        HttpRequest idorReq;
-        try {
-            idorReq = HttpRequest.httpRequest(template.httpService(), buildRawWithUrl(template, newUrl));
-        } catch (Exception e) {
-            return 0.0;
+        // Try query-parameter IDOR
+        Map<String, String> queryParams = parseQueryParams(url);
+        for (var entry : queryParams.entrySet()) {
+            if (!isIdLikeParam(entry.getKey())) continue;
+            String currentVal = entry.getValue();
+            if (currentVal.length() < 2) continue;
+            String altVal = findAlternateId(sessionB, currentVal, null);
+            if (altVal == null && currentVal.matches("\\d+")) {
+                altVal = String.valueOf(Long.parseLong(currentVal) + 1);
+            }
+            if (altVal != null && !altVal.equals(currentVal)) {
+                String newUrl = url.replace(entry.getKey() + "=" + currentVal,
+                        entry.getKey() + "=" + altVal);
+                if (!newUrl.equals(url)) {
+                    try {
+                        HttpRequest idorReq = HttpRequest.httpRequest(
+                                template.httpService(), buildRawWithUrl(template, newUrl));
+                        max = Math.max(max, recordRound(idorReq, baseline,
+                                "IDOR 替换查询参数 " + entry.getKey() + " (" + currentVal + "→" + altVal + ")", rounds));
+                    } catch (Exception ignored) {}
+                }
+            }
         }
-        return recordRound(idorReq, baseline, "IDOR 替换资源ID (" + currentId + "→" + altId + ", 保留A鉴权)", rounds);
+
+        // Try JSON-body IDOR (only for POST/PUT/PATCH with JSON content)
+        String method = template.method().toUpperCase();
+        if (method.equals("POST") || method.equals("PUT") || method.equals("PATCH")) {
+            String body = template.bodyToString();
+            if (body != null && !body.isBlank()) {
+                String newBody = substituteBodyIds(body, sessionA, sessionB);
+                if (newBody != null && !newBody.equals(body)) {
+                    try {
+                        HttpRequest idorReq = HttpRequest.httpRequest(
+                                template.httpService(),
+                                template.toString().replace("\r\n\r\n" + body, "\r\n\r\n" + newBody));
+                        max = Math.max(max, recordRound(idorReq, baseline,
+                                "IDOR 替换 JSON body 中的资源ID (保留A鉴权)", rounds));
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+
+        return max;
+    }
+
+    /**
+     * Substitute resource IDs in a JSON body with alternates from session
+     * B. Only substitutes known ID-like keys (see {@link #ID_PARAM_PATTERNS}).
+     * Returns null when no substitution was possible.
+     */
+    private String substituteBodyIds(String body, SessionInfo sessionA, SessionInfo sessionB) {
+        String result = body;
+        boolean anySubstituted = false;
+        for (String pattern : ID_PARAM_PATTERNS) {
+            // Match "key": "value" or "key": value (numeric)
+            Pattern jsonPattern = Pattern.compile(
+                    "\"" + Pattern.quote(pattern) + "\"\\s*:\\s*(\"([^\"]+)\"|(\\d+))",
+                    Pattern.CASE_INSENSITIVE);
+            Matcher m = jsonPattern.matcher(result);
+            if (m.find()) {
+                String currentVal = m.group(2) != null ? m.group(2) : m.group(3);
+                String altVal = findAlternateId(sessionB, currentVal, null);
+                if (altVal == null && currentVal.matches("\\d+")) {
+                    altVal = String.valueOf(Long.parseLong(currentVal) + 1);
+                }
+                if (altVal != null && !altVal.equals(currentVal)) {
+                    String replacement;
+                    if (m.group(2) != null) {
+                        replacement = "\"" + pattern + "\":\"" + altVal + "\"";
+                    } else {
+                        replacement = "\"" + pattern + "\":" + altVal;
+                    }
+                    result = result.substring(0, m.start()) + replacement + result.substring(m.end());
+                    anySubstituted = true;
+                }
+            }
+        }
+        return anySubstituted ? result : null;
     }
 
     private double recordRound(HttpRequest request, HttpResponse baseline, String description,
                                List<AuthTestRound> rounds) {
         try {
             HttpRequestResponse resp = api.http().sendRequest(request);
+            rateLimitDelay();
             HttpResponse response = resp.response();
             if (response == null) {
                 rounds.add(new AuthTestRound(description, 0, 0.0,
@@ -257,23 +533,85 @@ public class AuthTestExecutor {
 
     /** First numeric or UUID path segment, or null. */
     private static String findFirstId(String url) {
-        Matcher m = UUID_ID.matcher(url);
+        // Strip query string first to avoid matching IDs in query
+        int qIdx = url.indexOf('?');
+        String pathOnly = qIdx >= 0 ? url.substring(0, qIdx) : url;
+        Matcher m = UUID_ID.matcher(pathOnly);
         if (m.find()) return m.group(1);
-        m = NUMERIC_ID.matcher(url);
+        m = NUMERIC_ID.matcher(pathOnly);
         if (m.find()) return m.group(1);
         return null;
     }
 
-    /** Find a different resource ID for the same path-pattern in session B. */
-    private static String findAlternateId(SessionInfo sessionB, String currentId) {
+    /** Extract a path pattern from a URL (path with numeric/UUID segments
+     *  replaced by placeholders), used to match alternate IDs from the
+     *  same type of endpoint. */
+    private static String extractPathPattern(String url) {
+        int qIdx = url.indexOf('?');
+        String pathOnly = qIdx >= 0 ? url.substring(0, qIdx) : url;
+        int scheme = pathOnly.indexOf("://");
+        if (scheme >= 0) {
+            int pathStart = pathOnly.indexOf('/', scheme + 3);
+            if (pathStart >= 0) pathOnly = pathOnly.substring(pathStart);
+        }
+        // Replace UUIDs and numeric IDs with placeholders
+        return UUID_ID.matcher(pathOnly).replaceAll("/{UUID}")
+                .replaceAll(NUMERIC_ID.pattern(), "/{ID}");
+    }
+
+    /**
+     * Find a different resource ID from session B's history that matches
+     * the same path pattern. Pre-rework this took the first different
+     * ID from any session B request, which could be from a completely
+     * different endpoint (e.g. matching /api/users/{id} against
+     * /api/orders/{id}). Now we prefer same-pattern matches and fall
+     * back to any-match only when no pattern-aware candidate exists.
+     *
+     * @param currentId the ID currently in the request
+     * @param pathPattern the path with IDs replaced by placeholders (nullable)
+     */
+    private static String findAlternateId(SessionInfo sessionB, String currentId, String pathPattern) {
+        String fallback = null;
         for (ProxyHttpRequestResponse r : sessionB.getRequests()) {
             try {
                 String u = r.finalRequest().url();
                 String id = findFirstId(u);
-                if (id != null && !id.equals(currentId)) return id;
+                if (id == null || id.equals(currentId)) continue;
+                // Prefer same-pattern match
+                if (pathPattern != null) {
+                    String candidatePattern = extractPathPattern(u);
+                    if (pathPattern.equals(candidatePattern)) return id;
+                }
+                if (fallback == null) fallback = id;
             } catch (Exception ignored) {}
         }
-        return null;
+        return fallback;
+    }
+
+    /** Parse query parameters from a URL into a key→value map. */
+    private static Map<String, String> parseQueryParams(String url) {
+        Map<String, String> params = new LinkedHashMap<>();
+        int qIdx = url.indexOf('?');
+        if (qIdx < 0) return params;
+        String query = url.substring(qIdx + 1);
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0) {
+                params.put(pair.substring(0, eq), pair.substring(eq + 1));
+            }
+        }
+        return params;
+    }
+
+    /** True when the parameter name looks like a resource ID. */
+    private static boolean isIdLikeParam(String paramName) {
+        String lower = paramName.toLowerCase();
+        for (String pattern : ID_PARAM_PATTERNS) {
+            if (lower.equals(pattern) || lower.endsWith("_" + pattern) || lower.endsWith(pattern)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Rebuild the raw request with a different URL/path line. */
@@ -314,6 +652,15 @@ public class AuthTestExecutor {
             }
         }
         return "潜在鉴权问题";
+    }
+
+    /** Small delay between requests to avoid WAF / rate-limit triggers. */
+    private void rateLimitDelay() {
+        try {
+            Thread.sleep(INTER_REQUEST_DELAY_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static String truncate(String s, int maxLen) {

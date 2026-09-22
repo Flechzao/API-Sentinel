@@ -8,25 +8,35 @@ import java.util.stream.Collectors;
 /** Sink 标注器——扫描代码中 7 类危险 sink 并在片段中标注 [⚠ SQL SINK] 等。 */
 public final class SinkAnnotator {
 
-    private static final Map<SinkMap.SinkType, String> LABELS = Map.of(
-            SinkMap.SinkType.SQL, "⚠ SQL SINK",
-            SinkMap.SinkType.COMMAND, "⚠ CMD SINK",
-            SinkMap.SinkType.FILE_ACCESS, "⚠ FILE SINK",
-            SinkMap.SinkType.DESERIALIZATION, "⚠ DESER SINK",
-            SinkMap.SinkType.SSRF, "⚠ SSRF SINK",
-            SinkMap.SinkType.CRYPTO, "⚠ WEAK CRYPTO",
-            SinkMap.SinkType.INSECURE_RANDOM, "⚠ INSECURE RNG"
+    private static final Map<SinkMap.SinkType, String> LABELS = java.util.Map.ofEntries(
+            java.util.Map.entry(SinkMap.SinkType.SQL, "⚠ SQL SINK"),
+            java.util.Map.entry(SinkMap.SinkType.COMMAND, "⚠ CMD SINK"),
+            java.util.Map.entry(SinkMap.SinkType.FILE_ACCESS, "⚠ FILE SINK"),
+            java.util.Map.entry(SinkMap.SinkType.DESERIALIZATION, "⚠ DESER SINK"),
+            java.util.Map.entry(SinkMap.SinkType.SSRF, "⚠ SSRF SINK"),
+            java.util.Map.entry(SinkMap.SinkType.CRYPTO, "⚠ WEAK CRYPTO"),
+            java.util.Map.entry(SinkMap.SinkType.INSECURE_RANDOM, "⚠ INSECURE RNG"),
+            java.util.Map.entry(SinkMap.SinkType.XXE, "⚠ XXE SINK"),
+            java.util.Map.entry(SinkMap.SinkType.SSTI, "⚠ SSTI SINK"),
+            java.util.Map.entry(SinkMap.SinkType.CRLF, "⚠ CRLF SINK"),
+            java.util.Map.entry(SinkMap.SinkType.OPEN_REDIRECT, "⚠ OPEN REDIRECT"),
+            java.util.Map.entry(SinkMap.SinkType.NOSQL, "⚠ NOSQL SINK")
     );
 
     /** Backward-taint-tracing nudge appended to injection-prone sinks, pushing the
      *  agent to trace the interpolated variables back to their (possibly stored,
      *  cross-endpoint) source instead of stopping at the sink line. */
-    private static final Map<SinkMap.SinkType, String> TRACE_HINTS = Map.of(
-            SinkMap.SinkType.SQL, "追踪拼接变量来源·查是否用户可控且未参数化",
-            SinkMap.SinkType.COMMAND, "追踪命令插值变量来源·查是否用户可控且未quote·若变量来自存储请用find_callers找写入接口(二阶注入)",
-            SinkMap.SinkType.FILE_ACCESS, "追踪路径变量来源·查是否用户可控且未限制目录",
-            SinkMap.SinkType.DESERIALIZATION, "追踪反序列化数据来源·查是否用户可控",
-            SinkMap.SinkType.SSRF, "追踪URL变量来源·查是否用户可控且无白名单"
+    private static final Map<SinkMap.SinkType, String> TRACE_HINTS = java.util.Map.ofEntries(
+            java.util.Map.entry(SinkMap.SinkType.SQL, "追踪拼接变量来源·查是否用户可控且未参数化"),
+            java.util.Map.entry(SinkMap.SinkType.COMMAND, "追踪命令插值变量来源·查是否用户可控且未quote·若变量来自存储请用find_callers找写入接口(二阶注入)"),
+            java.util.Map.entry(SinkMap.SinkType.FILE_ACCESS, "追踪路径变量来源·查是否用户可控且未限制目录"),
+            java.util.Map.entry(SinkMap.SinkType.DESERIALIZATION, "追踪反序列化数据来源·查是否用户可控"),
+            java.util.Map.entry(SinkMap.SinkType.SSRF, "追踪URL变量来源·查是否用户可控且无白名单"),
+            java.util.Map.entry(SinkMap.SinkType.XXE, "检查XML解析器是否禁用了外部实体(setFeature FEATURE_SECURE_PROCESSING / disallow-doctype-decl)"),
+            java.util.Map.entry(SinkMap.SinkType.SSTI, "追踪模板字符串变量来源·查是否用户输入被当作模板编译"),
+            java.util.Map.entry(SinkMap.SinkType.CRLF, "追踪Header值变量来源·查是否含CRLF字符且未过滤"),
+            java.util.Map.entry(SinkMap.SinkType.OPEN_REDIRECT, "追踪重定向URL变量来源·查是否用户可控且无白名单"),
+            java.util.Map.entry(SinkMap.SinkType.NOSQL, "追踪查询条件变量来源·查是否用户可控且未过滤$操作符")
     );
 
     private SinkAnnotator() {}

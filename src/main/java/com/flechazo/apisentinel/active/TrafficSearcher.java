@@ -17,10 +17,8 @@ public class TrafficSearcher {
 
     private final MontoyaApi api;
 
-    private static final Set<String> AUTH_HEADER_NAMES = Set.of(
-            "cookie", "authorization", "x-token", "x-access-token",
-            "x-csrf-token", "x-xsrf-token", "x-api-key", "x-auth-token",
-            "x-session-id", "token", "session");
+    // P3-10: unified to single source of truth
+    private static final Set<String> AUTH_HEADER_NAMES = com.flechazo.apisentinel.util.AuthHeaders.AUTH_HEADERS;
 
     public TrafficSearcher(MontoyaApi api) {
         this.api = api;
@@ -37,7 +35,9 @@ public class TrafficSearcher {
             Map<String, String> authHeaders,
             Map<String, String> commonHeaders,
             String body,
-            String contentType
+            String contentType,
+            int statusCode,
+            String responseSnippet
     ) {}
 
     /**
@@ -59,7 +59,12 @@ public class TrafficSearcher {
 
             HttpRequest req = entry.finalRequest();
             String reqHost = extractHost(req);
-            if (reqHost == null || !reqHost.contains(domain)) continue;
+            // P2-10: exact host or registered-domain suffix match, NOT
+            // substring. Pre-P2-10 `reqHost.contains(domain)` let
+            // domain="." match everything (harvesting the entire proxy
+            // history's credentials) and let "api.corp.com" match
+            // "api.corp.com.evil.tld".
+            if (reqHost == null || !hostMatches(reqHost, domain)) continue;
 
             // Extract auth headers
             Map<String, String> authHeaders = new LinkedHashMap<>();
@@ -75,6 +80,22 @@ public class TrafficSearcher {
 
             String contentType = req.headerValue("Content-Type");
             String body = req.bodyToString();
+
+            // Capture the response so the agent can compare responses across
+            // sessions (e.g. two different auth headers returning the SAME
+            // resource body = IDOR) without having to replay. Truncated to
+            // keep context bounded — the head of a JSON body usually carries
+            // the owner/uid/data fields that prove cross-account access.
+            int statusCode = 0;
+            String responseSnippet = "";
+            if (entry.response() != null) {
+                statusCode = entry.response().statusCode();
+                String respBody = entry.response().bodyToString();
+                if (respBody != null && !respBody.isEmpty()) {
+                    responseSnippet = respBody.length() > 1000
+                            ? respBody.substring(0, 1000) + "..." : respBody;
+                }
+            }
 
             String reqPath = req.path();
             // Optional path pattern filter
@@ -98,7 +119,8 @@ public class TrafficSearcher {
 
             results.add(new TrafficTemplate(
                     reqHost, req.method(), reqPath,
-                    authHeaders, commonHeaders, body, contentType));
+                    authHeaders, commonHeaders, body, contentType,
+                    statusCode, responseSnippet));
         }
 
         return results;
@@ -111,7 +133,7 @@ public class TrafficSearcher {
         List<ProxyHttpRequestResponse> history = api.proxy().history();
         for (ProxyHttpRequestResponse entry : history) {
             String host = extractHost(entry.finalRequest());
-            if (host != null && host.contains(domain)) return true;
+            if (host != null && hostMatches(host, domain)) return true;
         }
         return false;
     }
@@ -147,7 +169,7 @@ public class TrafficSearcher {
         List<ProxyHttpRequestResponse> history = api.proxy().history();
         for (ProxyHttpRequestResponse entry : history) {
             String host = extractHost(entry.finalRequest());
-            if (host == null || !host.contains(domain)) continue;
+            if (host == null || !hostMatches(host, domain)) continue;
 
             Map<String, String> headers = new LinkedHashMap<>();
             for (var header : entry.finalRequest().headers()) {
@@ -170,7 +192,7 @@ public class TrafficSearcher {
         for (ProxyHttpRequestResponse entry : history) {
             if (values.size() >= 5) break;
             String host = extractHost(entry.finalRequest());
-            if (host == null || !host.contains(domain)) continue;
+            if (host == null || !hostMatches(host, domain)) continue;
 
             String path = entry.finalRequest().path();
             String body = entry.finalRequest().bodyToString();
@@ -214,6 +236,23 @@ public class TrafficSearcher {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** P2-10: exact host or registered-domain suffix match.
+     *  <ul>
+     *    <li>{@code host.equals(domain)} — same host</li>
+     *    <li>{@code host.endsWith("." + domain)} — subdomain of the
+     *        searched domain (e.g. searching "example.com" matches
+     *        "api.example.com" but NOT "api.example.com.evil.tld")</li>
+     *  </ul>
+     *  Also rejects domains shorter than 4 chars (e.g. "." or "a")
+     *  that would match an unreasonably broad set of hosts. */
+    static boolean hostMatches(String host, String domain) {
+        if (host == null || domain == null) return false;
+        String h = host.toLowerCase(java.util.Locale.ROOT).trim();
+        String d = domain.toLowerCase(java.util.Locale.ROOT).trim();
+        if (d.length() < 4) return false;  // too short → ambiguous
+        return h.equals(d) || h.endsWith("." + d);
     }
 
     private static boolean isCommonHeader(String name) {

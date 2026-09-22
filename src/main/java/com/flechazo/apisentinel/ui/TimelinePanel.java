@@ -212,8 +212,7 @@ public class TimelinePanel extends JPanel {
         centerPanel.add(timeLabel);
 
         // Type icon
-        JLabel iconLabel = new JLabel(iconForType(event.type()));
-        iconLabel.setFont(theme.displayFont(Font.PLAIN, 11f));
+        JLabel iconLabel = new JLabel(iconForType(event.type(), event.colorHint()));
         centerPanel.add(iconLabel);
 
         // Summary text
@@ -300,15 +299,18 @@ public class TimelinePanel extends JPanel {
         };
     }
 
-    private String iconForType(TimelineEvent.Type type) {
+    /** 矢量类型图标（取代 emoji）；颜色沿用事件的 colorHint，与时间线圆点一致。 */
+    private Icon iconForType(TimelineEvent.Type type, TimelineEvent.ColorHint hint) {
+        int sz = 14;
+        Color c = colorForHint(hint);
         return switch (type) {
-            case THINKING -> "💬";
-            case TOOL_CALL -> "🔧";
-            case TOOL_RESULT -> "📋";
-            case ITERATION -> "●";
-            case STAGE -> "▶";
-            case VERDICT -> "✅";
-            case ERROR -> "❌";
+            case THINKING -> IconFactory.of(IconFactory.Kind.ROBOT, sz, c);
+            case TOOL_CALL -> IconFactory.of(IconFactory.Kind.TOOLS, sz, c);
+            case TOOL_RESULT -> IconFactory.of(IconFactory.Kind.RULES, sz, c);
+            case ITERATION -> IconFactory.of(IconFactory.Kind.NEUTRAL, sz, c);
+            case STAGE -> IconFactory.of(IconFactory.Kind.NEUTRAL, sz, c);
+            case VERDICT -> IconFactory.of(IconFactory.Kind.OK, sz, theme.statusOk());
+            case ERROR -> IconFactory.of(IconFactory.Kind.FAIL, sz, theme.statusError());
         };
     }
 

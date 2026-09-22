@@ -55,9 +55,9 @@ class BatchOrchestrator {
 
     private final AtomicInteger batchTotal = new AtomicInteger(0);
     private final AtomicInteger batchDone = new AtomicInteger(0);
-    /** Cap concurrent in-flight pipeline/agent analyses so a 50-entry batch
-     * doesn't launch 50 simultaneous LLM call streams. */
-    private final java.util.concurrent.Semaphore batchSlots = new java.util.concurrent.Semaphore(2);
+    /** Cap concurrent in-flight pipeline/agent analyses. Configurable via
+     *  {@link #setBatchConcurrent(boolean)} — serial (1) or parallel (4). */
+    private java.util.concurrent.Semaphore batchSlots = new java.util.concurrent.Semaphore(4);
     private final java.util.concurrent.ConcurrentLinkedDeque<ApiEntry> batchPending = new java.util.concurrent.ConcurrentLinkedDeque<>();
     private LlmProvider batchProvider;
 
@@ -83,6 +83,11 @@ class BatchOrchestrator {
     void setLearnedRuleEngine(LearnedRuleEngine engine) { this.learnedRuleEngine = engine; }
 
     // ======================== Simple queue analysis (TRAFFIC_ONLY etc.) ========================
+
+    /** Set parallel (4 concurrent) or serial (1 at a time) batch mode. */
+    public void setBatchConcurrent(boolean parallel) {
+        batchSlots = new java.util.concurrent.Semaphore(parallel ? 4 : 1);
+    }
 
     public void onAiAnalyze(int[] selectedRows) {
         onAiAnalyze(selectedRows, AnalysisMode.TRAFFIC_ONLY);
@@ -236,7 +241,7 @@ class BatchOrchestrator {
                     }
                 }
             } catch (Exception e) {
-                logger.debug("测试用例自动生成失败: %s", e.getMessage());
+                logger.warn("测试用例自动生成失败: %s", e.getMessage());
             }
         });
     }

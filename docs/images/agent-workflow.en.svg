@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="962" viewBox="0 0 880 962" role="img" aria-labelledby="title desc">
+  <title id="title">Autonomous Agent Workflow</title>
+  <desc id="desc">Select an API endpoint and assemble context. The LLM investigates autonomously, choosing tools to read traffic and source code, reason with AI, and send requests for evidence. Tool results feed back into the investigation. Submit a report when evidence is ready. A rejected submission returns reasons and loops back to investigation. Accepted submissions proceed to verdict review and report output; acceptance does not mean confirmed.</desc>
+  <defs>
+    <marker id="arrowBlue" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2563eb"/></marker>
+    <marker id="arrowPurple" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#7c3aed"/></marker>
+    <marker id="arrowGreen" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#10a37f"/></marker>
+    <marker id="arrowOrange" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#d97706"/></marker>
+    <filter id="shadowSoft" x="-10%" y="-15%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.07"/></filter>
+    <style>
+      text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .title { font-size: 26px; font-weight: 700; fill: #111827; }
+      .heading { font-size: 16px; font-weight: 700; fill: #111827; }
+      .body { font-size: 15px; fill: #475569; }
+      .label { font-size: 13px; font-weight: 500; fill: #64748b; }
+      .blue { fill: #2563eb; } .purple { fill: #7c3aed; }
+      .green { fill: #087f65; } .orange { fill: #b45309; }
+      .edge { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+      .card { fill: #ffffff; stroke-width: 1.4; filter: url(#shadowSoft); }
+    </style>
+  </defs>
+  <rect width="880" height="962" fill="#ffffff"/>
+  <text x="440" y="44" text-anchor="middle" class="title">Autonomous Agent Workflow</text>
+  <text x="440" y="72" text-anchor="middle" class="body">One endpoint: choose tools, gather real evidence, pass gates, report</text>
+
+  <rect x="64" y="106" width="304" height="84" rx="10" class="card" stroke="#2563eb"/>
+  <text x="84" y="136" class="heading blue">Select an endpoint</text>
+  <text x="84" y="162" class="body">Captured request / response</text>
+  <path d="M368 148 H448" class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)"/>
+  <text x="408" y="134" text-anchor="middle" class="label blue">Start</text>
+  <rect x="448" y="106" width="368" height="84" rx="10" class="card" stroke="#2563eb"/>
+  <text x="468" y="136" class="heading blue">Assemble context</text>
+  <text x="468" y="162" class="body">System Prompt · session · source &amp; tools</text>
+  <path d="M632 190 V214 H404 V232" class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)"/>
+
+  <rect x="64" y="232" width="680" height="346" rx="12" fill="#f5f3ff" stroke="#c4b5fd" stroke-dasharray="5 5"/>
+  <text x="84" y="262" class="heading purple">Autonomous investigation · LLM chooses the next step</text>
+  <text x="84" y="286" class="body">Tools are chosen as needed, not fixed stages; results feed the next turn.</text>
+  <rect x="224" y="308" width="360" height="72" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="244" y="336" class="heading purple">Read clues · pick tools · build evidence</text>
+  <text x="244" y="360" class="body">Update hypotheses &amp; tests from results</text>
+
+  <path d="M404 380 V408 H180 V434" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <path d="M404 408 V434" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <path d="M404 408 H628 V434" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <text x="424" y="400" class="label purple">Choose as needed</text>
+
+  <rect x="84" y="434" width="192" height="116" rx="10" class="card" stroke="#2563eb"/>
+  <text x="104" y="462" class="heading blue">Read traffic / code</text>
+  <text x="104" y="488" class="body">search_traffic</text>
+  <text x="104" y="510" class="body">search_source_code</text>
+  <text x="104" y="532" class="body">audit_codebase</text>
+  <rect x="308" y="434" width="192" height="116" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="328" y="462" class="heading purple">Reason / plan tests</text>
+  <text x="328" y="488" class="body">analyze_traffic</text>
+  <text x="328" y="510" class="body">generate_payloads</text>
+  <text x="328" y="532" class="body">Meaning &amp; test goals</text>
+  <rect x="532" y="434" width="192" height="116" rx="10" class="card" stroke="#10a37f"/>
+  <text x="552" y="462" class="heading green">Send &amp; capture</text>
+  <text x="552" y="488" class="body">send_request</text>
+  <text x="552" y="510" class="body">verify_*</text>
+  <text x="552" y="532" class="body">test_auth_bypass</text>
+
+  <path d="M180 550 V596 H628 V550" class="edge" stroke="#10a37f"/>
+  <path d="M180 596 H40 V344 H224" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="84" y="330" class="label green">Tool results</text>
+  <text x="84" y="368" class="label green">Keep investigating</text>
+  <path d="M404 550 V654" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="424" y="626" class="label green">Evidence ready · submit report</text>
+
+  <rect x="96" y="654" width="616" height="116" rx="12" fill="#f0fdf4" stroke="#86d5b4" stroke-dasharray="5 5"/>
+  <text x="116" y="684" class="heading green">Submission gates · submit_report</text>
+  <text x="116" y="710" class="body">Heuristic scan · repo audit · test coverage · real requests</text>
+  <text x="116" y="738" class="body">Any rejection returns reasons; fill gaps and submit again</text>
+
+  <path d="M712 712 H812 V344 H584" class="edge" stroke="#d97706" marker-end="url(#arrowOrange)"/>
+  <text x="744" y="638" class="label orange">Rejected</text>
+  <text x="744" y="660" class="label orange">Fill gaps;</text>
+  <text x="744" y="682" class="label orange">resubmit</text>
+  <path d="M404 770 V830" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="424" y="792" class="label green">Gates passed ≠ confirmed</text>
+  <text x="424" y="814" class="label green">Review verdict</text>
+  <rect x="184" y="830" width="440" height="100" rx="10" class="card" stroke="#10a37f"/>
+  <text x="204" y="858" class="heading green">Report / verdict output</text>
+  <text x="204" y="884" class="body">confirmed / suspected · downgrade reasons</text>
+  <text x="204" y="906" class="body">Traceable evidence</text>
+</svg>

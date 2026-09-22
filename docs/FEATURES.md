@@ -1,6 +1,10 @@
 # API Sentinel 功能参考
 
-> 本文档是 [README.md](README.md) 的补充，包含被动检测规则详情、敏感信息规则格式、Agent 工具参数说明等查阅型参考内容。
+> 本文档是 [README.md](../README.md) 的补充，包含被动检测规则详情、敏感信息规则格式、Agent 工具参数说明等查阅型参考内容。
+>
+> 📐 **架构与设计文档索引**：
+> - [ARCHITECTURE.md](ARCHITECTURE.md) — 规格与代码架构、ADR 决策、开发工具链（四合一）
+> - [diagrams/](diagrams/README.md) — 交互式架构图（组件总览、时序、MCP 会话、数据流）
 
 ## 目录
 
@@ -160,7 +164,7 @@ API Sentinel 采用 **HaE 风格三层格式**（主正则 + 排除过滤 + 作�
 
 ### heuristic_scan
 
-无参数。直接调用，返回所有被动检测结果的 JSON 数组。
+无参数。直接调用，返回所有被动检测结果的 JSON 数组。检测范围：SQL 错误、堆栈跟踪、信息泄露、CORS 误配、安全头缺失、CSRF、请求走私、危险上传、反序列化、NoSQL 操作符（$ne/$gt 等）、GraphQL/introspection、URL 敏感参数泄露、开放重定向。
 
 ### analyze_traffic
 
@@ -194,9 +198,13 @@ API Sentinel 采用 **HaE 风格三层格式**（主正则 + 排除过滤 + 作�
 |------|------|------|------|
 | `method` | string | 是 | HTTP 方法 |
 | `path` | string | 是 | 请求路径 |
-| `headers` | object | 否 | 自定义请求头（key-value） |
+| `headers` | string | 否 | 自定义请求头（`Key: Value` 每行一个） |
 | `body` | string | 否 | 请求体 |
-| `query_params` | object | 否 | URL 查询参数（key-value） |
+| `multipart` | boolean | 否 | 为 true 时 body 按 multipart 字段格式解析（`field1=value1\nfield2=value2`），自动生成 boundary。用 `file:@/path/to/file` 上传文件 |
+| `timeout_ms` | integer | 否 | 请求超时毫秒数（默认 30000，最大 120000） |
+| `use_original_auth` | boolean | 否 | 是否携带原始认证头（默认 true） |
+| `payloads` | array | 否 | 批量并发变体数组 |
+| `host` | string | 否 | 目标 host:port（无流量时指定） |
 
 ### test_auth_bypass
 
@@ -204,7 +212,7 @@ API Sentinel 采用 **HaE 风格三层格式**（主正则 + 排除过滤 + 作�
 
 ### active_probe
 
-无参数。按触发条件自动执行：CORS（Origin 头存在）、JWT（检测到 JWT token）、CRLF（请求含换行字符）、NoSQL（请求体含 JSON 操作符）。
+无参数。按触发条件自动执行：CORS（Origin 头存在）、JWT（检测到 JWT token）、CRLF（请求含换行字符）、NoSQL（请求体含 JSON 操作符）、命令注入（shell 元字符 canary + `;sleep` 时序检测）。
 
 ### fingerprint_components
 
@@ -244,6 +252,54 @@ API Sentinel 采用 **HaE 风格三层格式**（主正则 + 排除过滤 + 作�
 | `attack_type` | string | 是 | 攻击类型：`price_tampering` / `coupon_replay` / `negative_value` / `step_skip` / `race_condition` / `enumeration` |
 | `target_field` | string | 否 | 目标字段名 |
 
+价格篡改和负值测试会校验响应体是否真正接受了篡改值。竞态测试使用 CountDownLatch 同步并发请求。
+
+### chain_hunter
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `task` | string | 是 | 已确认漏洞 A 的描述（类型+触发方式+payload+证据） |
+| `max_iterations` | integer | 否 | 子代理最大 LLM 轮次（默认 10，范围 3-20） |
+
+子代理自动发现兄弟端点、去重已测端点、按攻击模式扩散测试。
+
+### extract_auth
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `inject_to_config` | boolean | 否 | 是否注入到 AppConfig（默认 true） |
+
+从浏览器提取认证凭证（Cookie/JWT），注入到 send_request。使用 agent-browser CLI。
+
+**输出**：`success` / `cookie_count` / `bearer_token_present` / `cookie_names`（不返回值）/ `cookie_injected` / `bearer_token_injected`
+
+**依赖**：`npm install -g agent-browser && agent-browser install`
+
+### capture_requests
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `filter` | string | 否 | 过滤器：`xhr,fetch` / `POST` / `2xx`（默认 `xhr,fetch`） |
+| `save_to_file` | string | 否 | 保存路径（JSON 格式） |
+
+捕获浏览器网络请求模板（HAR），保存供 trigger_apis 复用。
+
+**输出**：`success` / `count` / `requests`（method/url/status）/ `saved_to`
+
+### trigger_apis
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `api_paths` | array | 否 | API 路径列表（默认使用表格选中项） |
+| `params` | object | 否 | 参数映射（用于 API 模板） |
+| `use_browser_explore` | boolean | 否 | 是否对无缓存的 API 使用 browser_explore（默认 true） |
+
+批量触发 API 表格中的接口。策略优先级：直接 HTTP（0.5s）> UI 重放（5-10s）> browser_explore（30-60s）。
+
+**输出**：`success` / `total` / `direct_triggered` / `ui_replayed` / `explored` / `failed` / `cache_stats`
+
+**性能提升**：后续触发速度 12x（25 分钟 → 2 分钟，100 个 API 场景）
+
 ### ssrf_oob
 
 无参数。返回生成的 OOB 探针域名（如 `abc123.internal.dnslog.cn`）。
@@ -251,6 +307,110 @@ API Sentinel 采用 **HaE 风格三层格式**（主正则 + 排除过滤 + 作�
 ### submit_report
 
 无参数。提交最终评估报告。**前置条件**：至少调用过 `heuristic_scan`；如果生成过 payload，必须通过 `send_request` 验证过至少 `min(N, 5)` 个。
+
+### list_attack_types
+
+查询内置攻击类型分类与 Payload 库（27 种类型、150+ payload）。零 LLM 成本，纯本地查表。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `attack_type` | string | 否 | 指定攻击类型 ID 查详情（如 `BOLA`、`SQL_INJECTION`）。省略则列出全部 |
+| `severity` | string | 否 | 按严重性过滤：`CRITICAL` / `HIGH` / `MEDIUM` / `LOW` |
+| `owasp_top10_only` | boolean | 否 | 仅返回 OWASP API Security Top 10 类型 |
+| `search` | string | 否 | 关键词搜索 payload（在 value/name/description 中匹配） |
+| `payload_limit` | integer | 否 | 每类型返回 payload 上限（默认 10） |
+
+**输出**：列表模式返回 `total` / `total_payloads` / `attack_types[]`（每个含 id/name/severity/owasp_mapping/payload_count）；详情模式返回单类型详情 + payloads[]；搜索模式返回 results[]。
+
+### generate_poc
+
+对已确认漏洞生成可执行的 Proof of Concept（cURL 命令 + Python 脚本 + 复现步骤 + 影响评估）。零 LLM 成本，纯模板生成。支持 15+ 漏洞类型。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `vuln_type` | string | 是 | 漏洞类型：SQL Injection / XSS / BOLA/IDOR / SSRF / Path Traversal / SSTI / XXE / Command Injection / Mass Assignment / Auth Bypass / CSRF / Open Redirect / NoSQL Injection 等 |
+| `endpoint` | string | 是 | 受影响端点描述（如 `GET /api/users/{id}`） |
+| `url` | string | 是 | 完整 URL |
+| `severity` | string | 否 | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW`（默认 `HIGH`） |
+| `method` | string | 否 | HTTP 方法（默认 `GET`） |
+| `payload` | string | 否 | 触发漏洞的 payload |
+| `evidence` | string | 否 | 响应证据片段 |
+| `description` | string | 否 | 漏洞描述 |
+| `remediation` | string | 否 | 修复建议 |
+| `cookies` | string | 否 | 复现所需 Cookie |
+| `headers` | string | 否 | 额外请求头（每行一个） |
+| `confidence` | integer | 否 | 置信度 0-100（默认 80） |
+| `save_to_file` | string | 否 | 保存为 Markdown 文件的路径 |
+
+**输出**：`curl_command` / `python_script` / `steps[]` / `impact` / `remediation` / `total_generated`（累计生成数）。可选 `saved_to` / `format`。
+
+**安全**：所有用户输入（url/cookies/headers/payload）在拼入 curl 单引号串与 Python 双引号串前均做转义（`escapeSingle`/`escapePy`），防命令/代码注入；`{` 开头 payload 走 `json.loads` 而非裸拼 Python 代码。
+
+### orchestrate_agents
+
+编排多 Agent 协作工作流，协调 4 个角色：Planner（规划）、Explorer（侦察）、Executor（执行）、Verifier（验证）。每阶段输出作为下阶段输入。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `target_api` | string | 是 | 目标 API（如 `POST /api/orders`） |
+| `workflow` | string | 否 | 工作流类型：`full`（默认，4 阶段全跑）/ `plan`（仅规划）/ `execute`（仅执行，不调 LLM）/ `verify`（仅验证） |
+| `focus_areas` | string | 否 | 逗号分隔的关注领域（如 `authentication,authorization,injection`） |
+
+**输出**：`agent_outputs[]`（每阶段含 role/success/summary/iterations_used/tools_called）/ `phases_completed` / `phases_failed` / `next_step`。Planner/Explorer/Verifier 走 LLM，Executor 当前为占位阶段（提示用 send_request 等验证工具执行计划）。
+
+### custom_detection
+
+用 YAML 模板执行自定义检测规则（类 Nuclei）。模板从 `custom-templates/` 目录加载。零 LLM 成本。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `action` | string | 否 | `list`（列模板，默认）/ `run`（执行模板）/ `reload`（重载目录） |
+| `template_id` | string | run 时必填 | 要执行的模板 ID |
+| `tag` | string | 否 | list 时按 tag 过滤 |
+| `severity` | string | 否 | list 时按 severity 过滤 |
+
+**run 输出**：`matched`（是否命中）/ `matchers_matched` / `severity` / `finding` / `remediation` / `matched_matchers[]`。模板对当前 API 入口的 `lastRawResponse` 求值。
+
+**安全**：用户正则受 ReDoS 防护——pattern 长度上限 2000、目标截断 100k、灾难性回溯形态（如 `(a+)+`）直接拒绝；编译后的 Pattern 缓存复用。
+
+#### 自定义检测模板格式
+
+模板为 YAML，放在 `custom-templates/` 目录（`.yaml`/`.yml`），结构：
+
+```yaml
+id: custom-sqli-detection        # 必填，唯一标识
+name: Custom SQL Injection Detection   # 必填
+severity: critical               # 必填: critical/high/medium/low/info
+type: response-pattern           # 可选，默认 response-pattern
+
+description: 检测说明            # 可选
+remediation: 修复建议            # 可选
+tags: sqli, injection, owasp-a03 # 可选，逗号分隔
+
+matchers:                        # 必填，至少 1 个
+  - type: regex                  # regex / word / status / dsl
+    pattern: "(?i)(SQL syntax|mysql_fetch|ORA-\\d{5})"  # regex 用
+    words: ["syntax error", "mysql error"]              # word 用，内联数组
+    status: 500                                         # status 用
+    condition: or                # 可选，and/or（默认 or）
+    part: body                   # 可选，body/headers/all（默认 body）
+    negative: false              # 可选，true 时取反
+```
+
+> 注意：`words` 必须用内联数组格式 `["a", "b"]`；正则中的引号/反斜杠需按 YAML 双引号转义（`\"`、`\\d`、`\\s`），解析器会自动反转义。内置 3 个示例：`sqli-detection.yaml`、`ssrf-detection.yaml`、`sensitive-data.yaml`。
+
+### scan_mcp_servers
+
+扫描暴露的 MCP（Model Context Protocol）服务器端点并评估安全风险。并发探测 7 个常见路径，检测认证缺失、枚举工具、评风险等级。零 LLM 成本。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `target_url` | string | 否 | 目标 base URL（如 `https://example.com`）。省略则需 `scan_current_host=true` |
+| `scan_current_host` | boolean | 否 | 为 true 时扫描当前 API 入口的主机 |
+
+**输出**：`base_url` / `endpoints_found` / `critical_risk` / `endpoints[]`（每个含 url/status_code/auth_required/tool_count/risk_level/recommendation）。CRITICAL（无认证 + 有工具）时返回 warning + 处置建议。
+
+**安全**：SSRF 防护——扫描前解析主机，拒绝指向云元数据/链路本地地址（169.254/16、0.0.0.0、阿里云 100.100.100.200）的目标；放行 loopback 与站点本地段。总扫描时长上限 30s（7 端点并发探测，最坏约 10s）。
 
 ---
 
@@ -327,3 +487,22 @@ API Sentinel 采用 **HaE 风格三层格式**（主正则 + 排除过滤 + 作�
 - 验证门禁节（confirmed/疑似/身份证据/verdict 的 rejection_reasons）
 - 越权测试详情（session 信息、相似度、AI 仲裁结果）
 - 被动检测发现详情
+## 预算管理
+
+| 配置项 | 说明 |
+|--------|------|
+| `dailyBudgetTokens` | 日 token 预算（默认 500,000） |
+| `perRequestMaxTokens` | 单次请求上限（默认 50,000） |
+| `budgetMode` | `ENFORCE`（拦截）或 `MONITOR_ONLY`（只监控不拦截） |
+
+`MONITOR_ONLY` 模式下，token 消耗仍被记录和展示，但 LLM 调用永不拦截。适用于内部模型无限额度场景。
+
+`AnalysisCostTracker` 按单端点分析记录 token 消耗明细，在报告末尾输出输入/输出/合计的表格。
+
+## CLI 独立运行
+
+```bash
+java -jar API-Sentinel-1.1.jar --target URL --path PATH --endpoint LLM --api-key KEY --monitor-only
+```
+
+CLI 模式下所有 50+ 工具正常工作（HTTP 通过 java.net.http.HttpClient 发送，代理历史返回空）。详见 README。

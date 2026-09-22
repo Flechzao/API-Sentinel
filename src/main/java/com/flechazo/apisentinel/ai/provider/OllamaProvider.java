@@ -21,6 +21,11 @@ public class OllamaProvider implements LlmProvider {
     private volatile String model = "llama3";
     private final HttpClient httpClient;
     private volatile java.util.concurrent.ExecutorService executor;
+    /** TTL cache for {@link #isAvailable()} — avoids the 3-second blocking
+     *  HTTP probe on every call (e.g. from {@code getFirstAvailable()}). */
+    private volatile boolean cachedAvailability;
+    private volatile long cachedAvailabilityTime;
+    private static final long AVAILABILITY_CACHE_TTL_MS = 10_000L;
 
     public OllamaProvider() {
         this.httpClient = HttpClient.newBuilder()
@@ -170,32 +175,36 @@ public class OllamaProvider implements LlmProvider {
     }
 
     private static boolean isRetryable(Exception e) {
-        String msg = (e.getMessage() != null ? e.getMessage() : "").toLowerCase();
-        Throwable cause = e.getCause();
-        String causeMsg = cause != null && cause.getMessage() != null ? cause.getMessage().toLowerCase() : "";
-        return msg.contains("eof") || msg.contains("end of file")
-                || msg.contains("connection reset") || msg.contains("broken pipe")
-                || msg.contains("stream is closed") || msg.contains("premature")
-                || causeMsg.contains("eof") || causeMsg.contains("end of file")
-                || causeMsg.contains("connection reset") || causeMsg.contains("broken pipe")
-                || causeMsg.contains("stream is closed") || causeMsg.contains("premature")
-                || e instanceof java.io.EOFException
-                || cause instanceof java.io.EOFException;
+        return HttpRetryHelper.isRetryable(e);
     }
 
     @Override
     public int estimateTokens(String text) {
-        return text.length() / 4;
+        // P0-7: delegate to the shared CJK-aware default. Pre-P0-12 this
+        // was {@code length/4}, which under-counted Chinese text even
+        // harder than the other providers (2–2.5×).
+        return LlmProvider.estimateTokensDefault(text);
     }
 
     @Override
     public boolean isAvailable() {
+        long now = System.currentTimeMillis();
+        if (now - cachedAvailabilityTime < AVAILABILITY_CACHE_TTL_MS) {
+            return cachedAvailability;
+        }
         try {
             // Bound the probe so a dead/unreachable Ollama cannot block
             // getFirstAvailable() indefinitely — it sits first in the chain.
-            return testConnection().get(3, java.util.concurrent.TimeUnit.SECONDS);
+            cachedAvailability = testConnection().get(3, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Exception e) {
-            return false;
+            cachedAvailability = false;
         }
+        cachedAvailabilityTime = System.currentTimeMillis();
+        return cachedAvailability;
+    }
+
+    @Override
+    public void close() {
+        HttpRetryHelper.closeHttpClient(httpClient);
     }
 }

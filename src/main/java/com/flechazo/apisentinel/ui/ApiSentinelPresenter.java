@@ -3,6 +3,7 @@ package com.flechazo.apisentinel.ui;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import com.flechazo.apisentinel.ai.agent.AgentController;
+import com.flechazo.apisentinel.ai.provider.LlmProvider;
 import com.flechazo.apisentinel.ai.provider.LlmProviderFactory;
 import com.flechazo.apisentinel.ai.queue.AnalysisTask;
 import com.flechazo.apisentinel.ai.queue.AnalysisTask.AnalysisMode;
@@ -155,6 +156,7 @@ public class ApiSentinelPresenter {
         });
 
         view.getTablePanel().setOnAnalyzeRow(row -> onFullPipelineAnalyze(new int[]{row}));
+        view.getTablePanel().setOnJointAnalyze(rows -> onJointAnalyze(rows));
         view.getTablePanel().setOnAiChat(row -> {
             ApiEntry entry = tableModel.getEntryAt(row);
             if (entry != null) {
@@ -223,7 +225,7 @@ public class ApiSentinelPresenter {
     public void onAutoScanToggle(boolean enabled) {
         if (agentController != null) {
             agentController.setEnabled(enabled);
-            logger.info("自动扫描: %s", enabled ? "开启" : "关闭");
+            logger.debug("自动扫描: %s", enabled ? "开启" : "关闭");
         }
     }
 
@@ -236,6 +238,27 @@ public class ApiSentinelPresenter {
     public void onAiAnalyze(int[] selectedRows, AnalysisMode mode) { aiPresenter.onAiAnalyze(selectedRows, mode); }
     public void onFullPipelineAnalyze(int[] selectedRows) { aiPresenter.onFullPipelineAnalyze(selectedRows); }
     public void onFullPipelineAnalyze(int[] selectedRows, AnalysisTask.AnalysisMode mode) { aiPresenter.onFullPipelineAnalyze(selectedRows, mode); }
+
+    /** Multi-endpoint joint analysis: one Agent loop analyzes all selected entries. */
+    public void onJointAnalyze(int[] selectedRows) {
+        if (selectedRows == null || selectedRows.length < 2) return;
+        java.util.List<ApiEntry> entries = new java.util.ArrayList<>();
+        for (int row : selectedRows) {
+            ApiEntry entry = tableModel.getEntryAt(row);
+            if (entry != null) entries.add(entry);
+        }
+        if (entries.size() < 2) return;
+        logger.info("[联合分析] 启动多端点联合分析: %d 个接口", entries.size());
+        LlmProvider provider = aiPresenter.getFirstAvailableProvider();
+        if (provider == null) {
+            logger.error("[联合分析] 无可用的 AI Provider");
+            return;
+        }
+        aiPresenter.getAgentFacade().executeAgentForEntries(entries, provider, () -> {
+            logger.info("[联合分析] 完成");
+        });
+    }
+
     public void runPipelineForEntry(com.flechazo.apisentinel.model.ApiEntry entry) { aiPresenter.runPipelineForEntry(entry); }
 
     // === HotKey handlers (called from ApiSentinelExtension hotkey registration) ===
@@ -311,8 +334,8 @@ public class ApiSentinelPresenter {
             Window owner = view != null ? SwingUtilities.getWindowAncestor(view) : null;
             HistoryTrafficDialog dialog = new HistoryTrafficDialog(owner, api, entry);
             if (view != null) {
-                dialog.setOnExtractSession((slot, cookie) ->
-                        view.getAuthConfigPanel().setSessionFromExternal(slot, cookie, null));
+                dialog.setOnExtractSession((slot, credentials) ->
+                        view.getAuthConfigPanel().setSessionFromExternal(slot, credentials, null));
             }
             dialog.setVisible(true);
         });
@@ -332,7 +355,7 @@ public class ApiSentinelPresenter {
                 api.organizer().sendToOrganizer(rr);
                 sent++;
             } catch (Exception ex) {
-                logger.debug("发送到 Organizer 失败: %s", ex.getMessage());
+                logger.warn("发送到 Organizer 失败: %s", ex.getMessage());
             }
         }
         logger.info("[Organizer] 手动发送 %d 条请求到 Organizer", sent);
@@ -378,6 +401,7 @@ public class ApiSentinelPresenter {
         String[] lines = text.split("\\R");
         List<ApiEntry> newEntries = new ArrayList<>();
         int skipped = 0;
+        int domainCount = 0;
 
         for (String line : lines) {
             line = line.trim();
@@ -390,12 +414,24 @@ public class ApiSentinelPresenter {
 
             String method = "";
             String apiPath;
-            String[] parts = line.split("\\s+", 2);
-            if (parts.length == 2 && isValidHttpMethod(parts[0].toUpperCase())) {
+            String domain = "";
+
+            // Split into up to 3 segments: [METHOD] PATH [DOMAIN]
+            String[] parts = line.split("\\s+", 3);
+            if (parts.length >= 2 && isValidHttpMethod(parts[0].toUpperCase())) {
+                // "GET /path" or "GET /path domain"
                 method = parts[0].toUpperCase();
                 apiPath = parts[1].trim();
+                if (parts.length == 3 && looksLikeDomain(parts[2])) {
+                    domain = parts[2].trim().toLowerCase();
+                }
+            } else if (parts.length >= 2 && looksLikeDomain(parts[parts.length - 1])) {
+                // "/path domain" (no method)
+                apiPath = parts[0].trim();
+                domain = parts[parts.length - 1].trim().toLowerCase();
             } else {
-                apiPath = line;
+                // "/path" only
+                apiPath = parts[0].trim();
             }
 
             if (apiPath.isEmpty()) { skipped++; continue; }
@@ -404,7 +440,12 @@ public class ApiSentinelPresenter {
                 continue;
             }
 
-            newEntries.add(new ApiEntry(method, apiPath));
+            ApiEntry entry = new ApiEntry(method, apiPath);
+            if (!domain.isEmpty()) {
+                entry.setDomain(domain);
+                domainCount++;
+            }
+            newEntries.add(entry);
         }
 
         if (!newEntries.isEmpty()) {
@@ -414,7 +455,7 @@ public class ApiSentinelPresenter {
             if (view != null) view.getAuthConfigPanel().clearCookies();
 
         }
-        logger.info("导入完成: 成功 %d 个, 跳过 %d 个", newEntries.size(), skipped);
+        logger.info("导入完成: 成功 %d 个 (含域名 %d 个), 跳过 %d 个", newEntries.size(), domainCount, skipped);
 
         // Friendly nudge: placeholder patterns only work under EXACT match.
         // Under FUZZY (substring search) they never hit, so offer to switch.
@@ -637,7 +678,7 @@ public class ApiSentinelPresenter {
             case "highlightEnabled" -> configManager.setHighlightEnabled(toolbar.isHighlightEnabled());
             case "organizerAutoSend" -> configManager.setOrganizerAutoSendEnabled(toolbar.isOrganizerAutoSend());
             case "auditHighRiskOnly" -> configManager.setAuditHighRiskOnly(toolbar.isAuditHighRiskOnly());
-            case "codeExecAutoApprove" -> configManager.setCodeExecutionAutoApprove(toolbar.isCodeExecAutoApprove());
+            case "skipAllPermissions" -> configManager.setSkipAllPermissions(toolbar.isSkipAllPermissions());
 
             case "autoScan" -> {
                 configManager.setAutoScanEnabled(toolbar.isAutoScanEnabled());
@@ -649,6 +690,11 @@ public class ApiSentinelPresenter {
                     agentController.setCascadeEnabled(toolbar.isCascadeHuntEnabled());
                 }
             }
+            case "agentMode" -> configManager.getConfig().setAgentMode(toolbar.isAgentMode());
+            case "batchConcurrent" -> {
+                configManager.getConfig().setBatchConcurrent(toolbar.isBatchParallel());
+                aiPresenter.setBatchConcurrent(toolbar.isBatchParallel());
+            }
         }
     }
 
@@ -657,5 +703,20 @@ public class ApiSentinelPresenter {
             case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS" -> true;
             default -> false;
         };
+    }
+
+    /**
+     * Heuristic: does the token look like a domain name (or host:port)?
+     * Must contain a dot (or colon for port), must not start with '/',
+     * and must not contain path-like characters.
+     */
+    private static boolean looksLikeDomain(String token) {
+        if (token == null || token.isEmpty()) return false;
+        if (token.startsWith("/") || token.startsWith("?") || token.startsWith("#")) return false;
+        // Must contain a dot (e.g. "example.com") or be "localhost" / "localhost:port"
+        if (!token.contains(".") && !token.equals("localhost") && !token.startsWith("localhost:")) return false;
+        // Must not contain path-like characters
+        if (token.contains("/") || token.contains("?") || token.contains("=")) return false;
+        return true;
     }
 }

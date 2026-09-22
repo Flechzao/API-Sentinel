@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="1060" viewBox="0 0 880 1060" role="img" aria-labelledby="title desc">
+  <title id="title">反幻觉防御</title>
+  <desc id="desc">模型假设先经真实取证，再过启发扫描、配库审计、验证覆盖和真实请求提交门禁。未通过时返回原因并补测或补审。通过后核对证据结构与原始记录，满足确认要求才输出 confirmed，证据不足或不匹配则降级为 suspected 并附理由。</desc>
+  <defs>
+    <marker id="arrowPurple" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#7c3aed"/></marker>
+    <marker id="arrowGreen" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#10a37f"/></marker>
+    <marker id="arrowOrange" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#d97706"/></marker>
+    <filter id="shadowSoft" x="-10%" y="-15%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.07"/></filter>
+    <style>
+      text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .title { font-size: 26px; font-weight: 700; fill: #111827; }
+      .heading { font-size: 16px; font-weight: 700; fill: #111827; }
+      .body { font-size: 15px; fill: #475569; }
+      .label { font-size: 13px; font-weight: 500; fill: #64748b; }
+      .blue { fill: #2563eb; } .purple { fill: #7c3aed; }
+      .green { fill: #087f65; } .orange { fill: #b45309; }
+      .edge { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+      .card { fill: #ffffff; stroke-width: 1.4; filter: url(#shadowSoft); }
+    </style>
+  </defs>
+  <rect width="880" height="1060" fill="#ffffff"/>
+  <text x="440" y="44" text-anchor="middle" class="title">反幻觉防御</text>
+  <text x="440" y="72" text-anchor="middle" class="body">模型提出假设，程序用真实记录取证与复核；提交通过不等于漏洞确认</text>
+
+  <rect x="200" y="104" width="368" height="72" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="220" y="132" class="heading purple">模型假设</text>
+  <text x="220" y="156" class="body">未验证的判断，不能直接成为 confirmed</text>
+  <path d="M384 176 V208" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+
+  <rect x="48" y="208" width="664" height="196" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-dasharray="5 5"/>
+  <text x="68" y="238" class="heading blue">真实取证</text>
+  <text x="68" y="262" class="body">用实际请求 / 响应形成 PayloadResult，而不是复述模型判断</text>
+  <rect x="68" y="284" width="292" height="100" rx="10" class="card" stroke="#2563eb"/>
+  <text x="88" y="310" class="heading blue">发送请求 / 主动探针</text>
+  <text x="88" y="338" class="body">send_request · active_probe</text>
+  <text x="88" y="360" class="body">记录真实请求与响应</text>
+  <rect x="400" y="284" width="292" height="100" rx="10" class="card" stroke="#10a37f"/>
+  <text x="420" y="310" class="heading green">定向验证 / OOB 回连</text>
+  <text x="420" y="338" class="body">verify_* · check_oob_results</text>
+  <text x="420" y="360" class="body">探针需实际触发并核对回连</text>
+  <path d="M384 404 V444" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+
+  <rect x="48" y="444" width="664" height="228" rx="12" fill="#f0fdf4" stroke="#86d5b4" stroke-dasharray="5 5"/>
+  <text x="68" y="474" class="heading green">提交门禁 · submit_report</text>
+  <rect x="68" y="496" width="292" height="70" rx="10" class="card" stroke="#10a37f"/>
+  <text x="88" y="522" class="heading">启发扫描</text>
+  <text x="88" y="546" class="body">heuristic_scan 必须执行</text>
+  <rect x="400" y="496" width="292" height="70" rx="10" class="card" stroke="#10a37f"/>
+  <text x="420" y="522" class="heading">配库审计</text>
+  <text x="420" y="546" class="body">配置仓库时先 audit_codebase</text>
+  <rect x="68" y="582" width="292" height="70" rx="10" class="card" stroke="#10a37f"/>
+  <text x="88" y="608" class="heading">验证覆盖</text>
+  <text x="88" y="632" class="body">生成 payload 后须达到实测要求</text>
+  <rect x="400" y="582" width="292" height="70" rx="10" class="card" stroke="#10a37f"/>
+  <text x="420" y="608" class="heading">真实请求</text>
+  <text x="420" y="632" class="body">有发现需真请求；例外见正文</text>
+
+  <!-- The rejected-submission loop has its own right-side channel. -->
+  <path d="M712 548 H812 V308 H712" class="edge" stroke="#d97706" marker-end="url(#arrowOrange)"/>
+  <text x="728" y="488" class="label orange">未通过</text>
+  <text x="728" y="510" class="label orange">返回原因</text>
+  <text x="728" y="386" class="label orange">补测 / 补审</text>
+  <text x="728" y="408" class="label orange">后重新提交</text>
+  <path d="M384 672 V716" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="400" y="700" class="label green">通过</text>
+
+  <rect x="104" y="716" width="560" height="112" rx="10" class="card" stroke="#10a37f"/>
+  <text x="124" y="746" class="heading green">证据结构 + 原始记录复核</text>
+  <text x="124" y="774" class="body">必需证据字段 · 请求索引与会话绑定</text>
+  <text x="124" y="798" class="body">响应证据逐字核对 · 相似度与黑名单（VerdictValidator）</text>
+
+  <!-- Confirmation and demotion split below the review card. -->
+  <path d="M384 828 V854 H218 V902" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <path d="M384 854 H566 V902" class="edge" stroke="#d97706" marker-end="url(#arrowOrange)"/>
+  <text x="234" y="882" class="label green">复核通过</text>
+  <text x="582" y="882" class="label orange">证据不足 / 不匹配</text>
+
+  <rect x="64" y="902" width="308" height="100" rx="10" fill="#f0fdf4" stroke="#10a37f" stroke-width="1.4" filter="url(#shadowSoft)"/>
+  <text x="84" y="932" class="heading green">confirmed</text>
+  <text x="84" y="956" class="body">证据满足确认要求</text>
+  <text x="84" y="980" class="body">以真实取证记录支撑</text>
+  <rect x="404" y="902" width="308" height="100" rx="10" fill="#fff7ed" stroke="#d97706" stroke-width="1.4" filter="url(#shadowSoft)"/>
+  <text x="424" y="932" class="heading orange">suspected</text>
+  <text x="424" y="956" class="body">保留疑点，不作已确认漏洞</text>
+  <text x="424" y="980" class="body">rejectionReasons · 降级理由</text>
+  <text x="48" y="1034" class="body">覆盖度提醒为软提示；真实请求门禁的特殊例外见正文。</text>
+</svg>

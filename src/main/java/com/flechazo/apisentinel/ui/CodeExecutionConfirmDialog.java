@@ -58,6 +58,10 @@ public final class CodeExecutionConfirmDialog {
      */
     public static boolean confirmBlocking(Frame owner, MontoyaApi api,
                                           String purpose, String interpreter, String code) {
+        // Global skip-all-permissions toggle (--dangerously-skip-permissions)
+        if (Boolean.getBoolean("api-sentinel.skip-permissions")) {
+            return true;
+        }
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean approved = new AtomicBoolean(false);
 

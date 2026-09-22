@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="1060" viewBox="0 0 880 1060" role="img" aria-labelledby="title desc">
+  <title id="title">Anti-Hallucination Defense</title>
+  <desc id="desc">Model hypotheses require real evidence, then pass submission gates for heuristic scanning, auditing a configured repository, test coverage, and real requests. Rejection returns reasons for further tests or code review before resubmission. After acceptance, the evidence schema and raw records are checked. Only evidence meeting confirmation requirements yields confirmed; insufficient or mismatched evidence is downgraded to suspected with reasons. Submission acceptance is not confirmation.</desc>
+  <defs>
+    <marker id="arrowPurple" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#7c3aed"/></marker>
+    <marker id="arrowGreen" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#10a37f"/></marker>
+    <marker id="arrowOrange" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#d97706"/></marker>
+    <filter id="shadowSoft" x="-10%" y="-15%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.07"/></filter>
+    <style>
+      text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .title { font-size: 26px; font-weight: 700; fill: #111827; }
+      .heading { font-size: 16px; font-weight: 700; fill: #111827; }
+      .body { font-size: 15px; fill: #475569; }
+      .label { font-size: 13px; font-weight: 500; fill: #64748b; }
+      .blue { fill: #2563eb; } .purple { fill: #7c3aed; }
+      .green { fill: #087f65; } .orange { fill: #b45309; }
+      .edge { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+      .card { fill: #ffffff; stroke-width: 1.4; filter: url(#shadowSoft); }
+    </style>
+  </defs>
+  <rect width="880" height="1060" fill="#ffffff"/>
+  <text x="440" y="44" text-anchor="middle" class="title">Anti-Hallucination Defense</text>
+  <text x="440" y="72" text-anchor="middle" class="body">Models propose; real records decide. Accepted submission ≠ confirmed finding.</text>
+
+  <rect x="200" y="104" width="368" height="72" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="220" y="132" class="heading purple">Model hypothesis</text>
+  <text x="220" y="156" class="body">An untested claim is not confirmed</text>
+  <path d="M384 176 V208" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+
+  <rect x="48" y="208" width="664" height="196" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-dasharray="5 5"/>
+  <text x="68" y="238" class="heading blue">Real evidence collection</text>
+  <text x="68" y="262" class="body">Build PayloadResult from real requests / responses, not model claims</text>
+  <rect x="68" y="284" width="292" height="100" rx="10" class="card" stroke="#2563eb"/>
+  <text x="88" y="310" class="heading blue">Requests / active probes</text>
+  <text x="88" y="338" class="body">send_request · active_probe</text>
+  <text x="88" y="360" class="body">Capture real requests &amp; responses</text>
+  <rect x="400" y="284" width="292" height="100" rx="10" class="card" stroke="#10a37f"/>
+  <text x="420" y="310" class="heading green">Targeted tests / OOB callbacks</text>
+  <text x="420" y="338" class="body">verify_* · check_oob_results</text>
+  <text x="420" y="360" class="body">Trigger probes; verify callbacks</text>
+  <path d="M384 404 V444" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+
+  <rect x="48" y="444" width="664" height="228" rx="12" fill="#f0fdf4" stroke="#86d5b4" stroke-dasharray="5 5"/>
+  <text x="68" y="474" class="heading green">Submission gates · submit_report</text>
+  <rect x="68" y="496" width="292" height="70" rx="10" class="card" stroke="#10a37f"/>
+  <text x="88" y="522" class="heading">Heuristic scan</text>
+  <text x="88" y="546" class="body">heuristic_scan must run</text>
+  <rect x="400" y="496" width="292" height="70" rx="10" class="card" stroke="#10a37f"/>
+  <text x="420" y="522" class="heading">Repository audit</text>
+  <text x="420" y="546" class="body">If a repo is set: audit_codebase</text>
+  <rect x="68" y="582" width="292" height="70" rx="10" class="card" stroke="#10a37f"/>
+  <text x="88" y="608" class="heading">Live-test coverage</text>
+  <text x="88" y="632" class="body">Required for generated payloads</text>
+  <rect x="400" y="582" width="292" height="70" rx="10" class="card" stroke="#10a37f"/>
+  <text x="420" y="608" class="heading">Real requests</text>
+  <text x="420" y="632" class="body">Findings need real requests*</text>
+
+  <path d="M712 548 H812 V308 H712" class="edge" stroke="#d97706" marker-end="url(#arrowOrange)"/>
+  <text x="728" y="488" class="label orange">Rejected</text>
+  <text x="728" y="510" class="label orange">Reasons</text>
+  <text x="728" y="386" class="label orange">Retest or</text>
+  <text x="728" y="408" class="label orange">re-audit;</text>
+  <text x="728" y="430" class="label orange">resubmit</text>
+  <path d="M384 672 V716" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="400" y="700" class="label green">Accepted</text>
+
+  <rect x="104" y="716" width="560" height="112" rx="10" class="card" stroke="#10a37f"/>
+  <text x="124" y="746" class="heading green">Evidence schema + raw-record review</text>
+  <text x="124" y="774" class="body">Required fields · request index &amp; session binding</text>
+  <text x="124" y="798" class="body">Exact response match · similarity &amp; blocklist (VerdictValidator)</text>
+
+  <path d="M384 828 V854 H218 V902" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <path d="M384 854 H566 V902" class="edge" stroke="#d97706" marker-end="url(#arrowOrange)"/>
+  <text x="234" y="882" class="label green">Review passed</text>
+  <text x="582" y="882" class="label orange">Missing / mismatched evidence</text>
+
+  <rect x="64" y="902" width="308" height="100" rx="10" fill="#f0fdf4" stroke="#10a37f" stroke-width="1.4" filter="url(#shadowSoft)"/>
+  <text x="84" y="932" class="heading green">confirmed</text>
+  <text x="84" y="956" class="body">Meets confirmation requirements</text>
+  <text x="84" y="980" class="body">Backed by real evidence records</text>
+  <rect x="404" y="902" width="308" height="100" rx="10" fill="#fff7ed" stroke="#d97706" stroke-width="1.4" filter="url(#shadowSoft)"/>
+  <text x="424" y="932" class="heading orange">suspected</text>
+  <text x="424" y="956" class="body">Keep as a lead, not confirmed</text>
+  <text x="424" y="980" class="body">rejectionReasons · why downgraded</text>
+  <text x="48" y="1034" class="body">Coverage reminders are advisory. * Real-request gate exceptions: see text.</text>
+</svg>

@@ -2,7 +2,7 @@ package com.flechazo.apisentinel.ui;
 
 import burp.api.montoya.MontoyaApi;
 import com.flechazo.apisentinel.ai.pipeline.PayloadResult;
-import com.flechazo.apisentinel.ai.pipeline.PipelineConfig;
+import com.flechazo.apisentinel.ai.pipeline.AnalysisConfig;
 import com.flechazo.apisentinel.ai.provider.ChatMessage;
 import com.flechazo.apisentinel.ai.provider.LlmProvider;
 import com.flechazo.apisentinel.ai.provider.LlmProviderFactory;
@@ -37,6 +37,10 @@ class ChatController {
     private ApiSentinelTab view;
     /** Inline chat cards (sandbox confirm / ask_user) for tool-calling chats. */
     private com.flechazo.apisentinel.ai.agent.tool.UserInteractionBridge interactionBridge;
+    /** F-1: Browser service for client-side security testing (null if disabled). */
+    private com.flechazo.apisentinel.browser.BrowserService browserService;
+    /** F-1: API repository for registering browser-discovered APIs. */
+    private com.flechazo.apisentinel.repository.ApiRepository repository;
 
     ChatController(MontoyaApi api, ConfigManager configManager, CodeIndexService codeIndexService,
                    LlmProviderFactory providerFactory, OobService oobService,
@@ -54,6 +58,22 @@ class ChatController {
 
     void setInteractionBridge(com.flechazo.apisentinel.ai.agent.tool.UserInteractionBridge bridge) {
         this.interactionBridge = bridge;
+    }
+
+    /** F-1: Set browser service for client-side security testing. */
+    void setBrowserService(com.flechazo.apisentinel.browser.BrowserService browserService) {
+        this.browserService = browserService;
+    }
+
+    /** F-1: Set API repository for registering browser-discovered APIs. */
+    void setRepository(com.flechazo.apisentinel.repository.ApiRepository repository) {
+        this.repository = repository;
+    }
+
+    /** Shared login-profile manager (also used by MCP) — enables browser_login. */
+    private com.flechazo.apisentinel.config.LoginProfileManager loginProfileManager;
+    void setLoginProfileManager(com.flechazo.apisentinel.config.LoginProfileManager m) {
+        this.loginProfileManager = m;
     }
 
     // ======================== Embedded chat tab ========================
@@ -95,7 +115,9 @@ class ChatController {
                 systemPrompt.append("重要规则：下方已提供当前接口的完整信息（包括请求、响应、分析记录等），");
                 systemPrompt.append("请直接基于这些信息回答用户问题，不要再向用户索要这些已有数据。\n");
                 systemPrompt.append("回答要求：专业、具体、可操作。使用中文回答。\n");
-                systemPrompt.append("你可以使用工具来实际发送请求验证漏洞，不要只是描述步骤让用户自己操作。\n\n");
+                systemPrompt.append("你可以使用工具来实际发送请求验证漏洞，不要只是描述步骤让用户自己操作。\n");
+                systemPrompt.append("当你通过 send_request 验证了一个「疑似」漏洞后，使用 update_finding 工具将其改为「已确认」，\n");
+                systemPrompt.append("漏洞列表会即时更新。先用 update_finding(finding_index=-1) 查看所有可用 finding 的索引。\n\n");
 
                 ApiEntry entry = chatPanel.getCurrentEntry();
                 if (entry != null) {
@@ -184,32 +206,36 @@ class ChatController {
         String reply = response.isSuccess() ? response.content()
                 : "请求失败: " + (response.errorMessage() != null ? response.errorMessage() : "未知错误");
         SwingUtilities.invokeLater(() -> chatPanel.replaceLastAiMessage(reply));
+        persistFollowUpToReport(chatPanel);
     }
 
     private void runEmbeddedToolCallingChat(LlmProvider provider, ApiEntry entry,
                                              AiChatPanel chatPanel, String systemPromptStr, String message) throws Exception {
         var appConfig = configManager.getConfig();
         boolean authTestEnabled = appConfig.isUnauthorizedDetectionEnabled();
-        PipelineConfig pipelineConfig = new PipelineConfig(true, 10, true, authTestEnabled,
-                appConfig.getAuthSessionACookie(), appConfig.getAuthSessionALabel(),
-                appConfig.getAuthSessionBCookie(), appConfig.getAuthSessionBLabel(),
-                appConfig.getContextWindowTokens(), true,
-                appConfig.isWafDetectionEnabled(), appConfig.isWafRetryEnabled(),
-                appConfig.isActiveProbeEnabled(), appConfig.isBlindVerificationEnabled(),
-                appConfig.getMaxBlindProbeRequests(),
-                appConfig.isBusinessLogicVerificationEnabled(),
-                appConfig.isAiAuthArbitrationEnabled())
-                .withAuditHighRiskOnly(appConfig.isAuditHighRiskOnly())
-                .withCodeExecutionAutoApprove(appConfig.isCodeExecutionAutoApprove());
+        AnalysisConfig pipelineConfig = AnalysisConfig.forPipeline(appConfig, authTestEnabled);
 
         com.flechazo.apisentinel.ai.agent.tool.ToolContext toolCtx =
                 new com.flechazo.apisentinel.ai.agent.tool.ToolContext(
                         entry, provider, api, codeIndexService,
                         appConfig.getCodeRepos(), pipelineConfig, logger, oobService);
         if (interactionBridge != null) toolCtx.setUserInteractionBridge(interactionBridge);
+        // F-1: Inject browser service if enabled
+        if (browserService != null) toolCtx.setBrowserService(browserService);
+        if (repository != null) toolCtx.setApiRepository(repository);
+        // Enable browser_login in chat (shared profiles with MCP + agent loop).
+        toolCtx.setAppConfig(appConfig);
+        if (loginProfileManager != null) toolCtx.setLoginProfileManager(loginProfileManager);
+        // Inject finding updater for chat follow-up verdict updates
+        if (view != null && view.getAiAnalysisPanel() != null) {
+            toolCtx.setFindingUpdater(view.getAiAnalysisPanel());
+        }
 
         com.flechazo.apisentinel.ai.agent.tool.AgentToolRegistry registry =
                 com.flechazo.apisentinel.ai.agent.tool.StandardToolRegistry.build(toolCtx, false).registry();
+
+        // Register update_finding tool for chat follow-up (not in main agent loop)
+        registry.register(new com.flechazo.apisentinel.ai.agent.tool.UpdateFindingTool(toolCtx));
 
         List<ToolDefinition> toolDefs = registry.getDefinitions();
 
@@ -327,11 +353,13 @@ class ChatController {
                     SwingUtilities.invokeLater(() -> chatPanel.replaceToolProgressWithReply(reply));
                 }
                 pushSendRequestResultsToRepeater(registry);
+                persistFollowUpToReport(chatPanel);
                 return;
             }
         }
 
         pushSendRequestResultsToRepeater(registry);
+        persistFollowUpToReport(chatPanel);
         chatPanel.setBusy(false);
         if (chatPanel.isInStepMode()) {
             SwingUtilities.invokeLater(() -> chatPanel.showFinalResponse("已达到工具调用上限。"));
@@ -352,6 +380,46 @@ class ChatController {
 
         for (PayloadResult pr : results) {
             repeaterPanel.addFollowUpPayloadResult(pr);
+        }
+    }
+
+    /**
+     * Persist follow-up conversation to the existing report file.
+     *
+     * <p>Initial analysis writes the report via PipelineReportWriter at
+     * completion time. Follow-up chats in the embedded chat panel were
+     * previously only appended to chat-history.json, leaving the per-analysis
+     * report file frozen at its initial state. This method rewrites the
+     * stage6_chatHistory section of the original report with the latest
+     * conversation, so the report reflects the full Q/A flow.
+     *
+     * <p>Silent no-op when there's no report yet (user hasn't run an analysis),
+     * no view, or no chat history — follow-ups must never throw.
+     */
+    private void persistFollowUpToReport(AiChatPanel chatPanel) {
+        try {
+            if (view == null) return;
+            AiAnalysisPanel analysisPanel = view.getAiAnalysisPanel();
+            if (analysisPanel == null) return;
+            java.nio.file.Path reportPath = analysisPanel.getJsonReportPath();
+            if (reportPath == null) return;
+
+            var history = chatPanel.getCurrentHistory();
+            if (history.isEmpty()) return;
+
+            List<Object> chatHistory = history.stream()
+                    .map(msg -> (Object) java.util.Map.of("role", msg.role(), "content",
+                            msg.content() != null && msg.content().length() > 5000
+                                    ? msg.content().substring(0, 5000) + "...[truncated]"
+                                    : (msg.content() != null ? msg.content() : "")))
+                    .toList();
+
+            com.flechazo.apisentinel.ai.pipeline.PipelineReportWriter writer =
+                    new com.flechazo.apisentinel.ai.pipeline.PipelineReportWriter(logger);
+            writer.updateChatHistory(reportPath, chatHistory);
+        } catch (Exception e) {
+            // Follow-up persistence must never surface to the user.
+            logger.warn("[Chat] 追问对话追加到报告失败（已忽略）: %s", e.getMessage());
         }
     }
 

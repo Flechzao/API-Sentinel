@@ -99,4 +99,33 @@ class HttpMessageUtilsTest {
         assertEquals("{\"username\":\"alice\",\"password\":\"pw\"}", HttpMessageUtils.bodyOf(RAW_JSON));
         assertFalse(HttpMessageUtils.headerSection(RAW_JSON).contains("alice"));
     }
+
+    // === P1-2: Probe marker tests ===
+
+    @Test
+    void addProbeMarker_insertsHeaderAfterRequestLine() {
+        String marked = HttpMessageUtils.addProbeMarker(RAW_GET);
+        // P1-4: marker value is the session nonce, not the old "probe"
+        // constant — asserting the constant here would silently pass
+        // even if addProbeMarker stopped marking at all.
+        assertTrue(marked.contains("X-Api-Sentinel: " + HttpMessageUtils.probeMarkerValue()));
+        // Header should be after the GET line
+        int getLineEnd = marked.indexOf('\n');
+        int markerPos = marked.indexOf("X-Api-Sentinel");
+        assertTrue(markerPos > getLineEnd);
+    }
+
+    @Test
+    void addProbeMarker_preservesOriginalHeaders() {
+        String marked = HttpMessageUtils.addProbeMarker(RAW_GET);
+        assertTrue(marked.contains("Host: example.com"));
+        assertTrue(marked.contains("Cookie: sid=abc123"));
+    }
+
+    @Test
+    void addProbeMarker_handlesRequestWithoutHeaders() {
+        String minimal = "GET /api/test HTTP/1.1\n";
+        String marked = HttpMessageUtils.addProbeMarker(minimal);
+        assertTrue(marked.contains("X-Api-Sentinel: " + HttpMessageUtils.probeMarkerValue()));
+    }
 }

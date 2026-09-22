@@ -30,16 +30,29 @@ public class ApiSentinelTab extends JPanel {
     private final ApiTablePanel tablePanel;
     private final AiAnalysisPanel aiAnalysisPanel;
     private final AiSettingsPanel aiSettingsPanel;
+    private final BrowserConfigPanel browserConfigPanel;
     private final SensitiveRulesPanel sensitiveRulesPanel;
     private final CodeRepoPanel codeRepoPanel;
     private final AuthConfigPanel authConfigPanel;
     private final OobConfigPanel oobConfigPanel;
+    private final McpConfigPanel mcpConfigPanel;
+    private final ConfigManager configManager;
+    /** Result of probing the official Burp MCP流量桥; refreshed by the
+     *  McpConfigPanel detection callback and pushed to the welcome page. */
+    private boolean burpMcpDetected = false;
     private final RepeaterPanel repeaterPanel;
     private final AiChatPanel aiChatPanel;
     private final TaskQueuePanel taskQueuePanel;
     private final PatternPanel patternPanel;
     private final JTabbedPane detailTabs;
     private final JTabbedPane settingsGroup;
+    private JTabbedPane advancedGroup;
+    private BambdaBuilderPanel bambdaBuilderPanel;
+    /** Swing Timers created in the constructor — must be stopped on shutdown
+     *  or the EDT's shared timer queue keeps their lambda closures alive,
+     *  pinning the entire extension ClassLoader in memory. */
+    private javax.swing.Timer searchDebounceTimer;
+    private javax.swing.Timer mainSplitTimerRef;
     private final RSyntaxTextArea sourceArea;
     private final RTextScrollPane sourceScroll;
     /** 源码 tab is added/removed dynamically — it only earns its slot once a
@@ -48,6 +61,7 @@ public class ApiSentinelTab extends JPanel {
     private TaskQueueDialog taskQueueDialog;
 
     private JButton aiBtn;
+    private JButton importBtn;
     private JButton moreBtn;
     private JButton settingsBtn;
     private JDialog settingsDialog;
@@ -79,6 +93,7 @@ public class ApiSentinelTab extends JPanel {
                              ConfigManager configManager) {
         setLayout(new BorderLayout());
         this.api = api;
+        this.configManager = configManager;
         theme = new BurpTheme(api);
 
         // ====================================================================
@@ -112,7 +127,7 @@ public class ApiSentinelTab extends JPanel {
 
         this.presenterRef = presenter;
 
-        JButton importBtn = makeBtn(I18n.get("import_api"), e -> {
+        importBtn = makeBtn(I18n.get("import_api"), e -> {
             Window window = SwingUtilities.getWindowAncestor(this);
             ImportDialog dialog = new ImportDialog(window, presenter::onImportApis, presenter::scanHistory, new BurpTheme(api));
             dialog.setVisible(true);
@@ -139,6 +154,19 @@ public class ApiSentinelTab extends JPanel {
         row1.add(moreBtn);
         row1.add(Box.createHorizontalStrut(4));
 
+        // Language switch — short "中/EN" with current language marked
+        final JButton[] langBtnHolder = new JButton[1];
+        langBtnHolder[0] = makeBtn("中/EN", e -> {
+            I18n.toggle();
+            updateLangBtn(langBtnHolder[0]);  // update button FIRST, before refresh
+            refreshI18nTexts();
+        });
+        updateLangBtn(langBtnHolder[0]);
+        langBtnHolder[0].setMargin(new java.awt.Insets(2, 10, 2, 10));
+        langBtnHolder[0].setPreferredSize(new java.awt.Dimension(90, 30));
+        langBtnHolder[0].setFont(langBtnHolder[0].getFont().deriveFont(Font.PLAIN, 12f));
+        row1.add(langBtnHolder[0]);
+
         // Settings used to occupy a bottom detail-tab slot (and a duplicate
         // AI-only panel lived in Burp's Settings dialog). Now a single ⚙ entry
         // point on the toolbar opens the full settings dialog.
@@ -150,6 +178,28 @@ public class ApiSentinelTab extends JPanel {
         // --- Row 2: Filters + Domain + Search + Import + AI Analyze + [More] ---
         filterBar = new FilterBar(repository, status -> tableModel.setStatusFilter(status), theme);
         filterBar.setOnRiskChanged(risk -> tableModel.setRiskFilter(risk));
+        filterBar.setOnBambda(() -> {
+            int[] rows = getSelectedRows();
+            java.util.List<com.flechazo.apisentinel.model.ApiEntry> entries = new java.util.ArrayList<>();
+            if (rows.length > 0) {
+                for (int row : rows) {
+                    var en = ((com.flechazo.apisentinel.model.ApiEntryTableModel) tablePanel.getTable().getModel()).getEntryAt(row);
+                    if (en != null) entries.add(en);
+                }
+            } else {
+                var tm = (com.flechazo.apisentinel.model.ApiEntryTableModel) tablePanel.getTable().getModel();
+                for (int i = 0; i < tm.getRowCount(); i++) {
+                    var en = tm.getEntryAt(i);
+                    if (en != null) entries.add(en);
+                }
+            }
+            if (entries.isEmpty()) return;
+            String code = com.flechazo.apisentinel.util.BambdaCodeGen.generateBatch(entries,
+                    com.flechazo.apisentinel.util.BambdaCodeGen.Mode.FILTER);
+            java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
+                    .setContents(new java.awt.datatransfer.StringSelection(code), null);
+            ThemedDialogs.info(this, "已复制 Bambda 过滤代码到剪贴板（" + entries.size() + " 个 API）", "Bambda");
+        });
         domainFilterCombo = new DomainFilterCombo(repository, domain -> tableModel.setDomainFilter(domain), theme);
 
         JPanel row2 = new JPanel(new BorderLayout(4, 0));
@@ -167,17 +217,17 @@ public class ApiSentinelTab extends JPanel {
         // tooltip explains its purpose.
         JTextField searchField = new JTextField(14);
         searchField.setFont(theme.displayFont(Font.PLAIN, 12f));
-        searchField.setToolTipText("搜索 API 路径（实时过滤）");
+        searchField.setToolTipText(I18n.get("search_tooltip"));
 
-        javax.swing.Timer searchDebounce = new javax.swing.Timer(300, evt -> {
+        searchDebounceTimer = new javax.swing.Timer(300, evt -> {
             String text = searchField.getText().trim();
             tablePanel.setSearchFilter(text);
         });
-        searchDebounce.setRepeats(false);
+        searchDebounceTimer.setRepeats(false);
         searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { searchDebounce.restart(); }
-            @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { searchDebounce.restart(); }
-            @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { searchDebounce.restart(); }
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { searchDebounceTimer.restart(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { searchDebounceTimer.restart(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { searchDebounceTimer.restart(); }
         });
         // Still support Enter for legacy jump-to behavior
         searchField.addActionListener(e -> {
@@ -256,6 +306,8 @@ public class ApiSentinelTab extends JPanel {
                 presenter::onContextWindowChanged, theme);
         aiSettingsPanel.setContextWindowTokens(configManager.getConfig().getContextWindowTokens());
 
+        browserConfigPanel = new BrowserConfigPanel(theme);
+
         sensitiveRulesPanel = new SensitiveRulesPanel(sensitiveRules, configManager::reloadSensitiveRules, theme);
         if (learnedRuleEngine != null) {
             sensitiveRulesPanel.setLearnedRuleEngine(learnedRuleEngine);
@@ -272,6 +324,7 @@ public class ApiSentinelTab extends JPanel {
         authConfigPanel = new AuthConfigPanel(configManager, theme, api);
         oobConfigPanel = new OobConfigPanel(configManager,
                 new com.flechazo.apisentinel.detection.OobService(api, configManager.getConfig(), null), theme);
+        mcpConfigPanel = new McpConfigPanel(configManager, theme);
 
         // --- Build flat tabs: [分析结果 | 请求测试 | 源码?] — the AI
         //     conversation lives in its own floating window (showChatWindow),
@@ -284,7 +337,7 @@ public class ApiSentinelTab extends JPanel {
         detailTabs.addTab(I18n.get("tab_repeater"), repeaterPanel);
 
         sourceArea = new RSyntaxTextArea();
-        sourceArea.setText("选中 API 后自动展示关联源码（需先在「代码仓库」中索引仓库）");
+        sourceArea.setText(I18n.get("source_placeholder"));
         sourceArea.setEditable(false);
         sourceArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JAVA);
         sourceArea.setCodeFoldingEnabled(true);
@@ -301,16 +354,38 @@ public class ApiSentinelTab extends JPanel {
 
         // Settings live in the toolbar ⚙ dialog (openSettingsDialog) — built
         // here as a self-contained tabbed group, deliberately NOT added to
-        // detailTabs.
+        // detailTabs. Consolidated from 6 tabs to 3 for less clutter.
         settingsGroup = new JTabbedPane();
-        settingsGroup.addTab(I18n.get("tab_settings"), aiSettingsPanel);
-        settingsGroup.addTab(I18n.get("tab_rules"), sensitiveRulesPanel);
-        settingsGroup.addTab(I18n.get("tab_repo"), codeRepoPanel);
-        settingsGroup.addTab(I18n.get("tab_auth_config"), authConfigPanel);
-        settingsGroup.addTab(I18n.get("tab_oob"), oobConfigPanel);
 
+        // Tab 1: 通用 (AI provider + browser + tool management)
+        // Wrap in a scroll pane — this panel is tall and would otherwise be
+        // clipped at the bottom when the settings dialog height is limited.
+        JScrollPane aiSettingsScroll = new JScrollPane(aiSettingsPanel,
+                javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        aiSettingsScroll.setBorder(null);
+        aiSettingsScroll.getVerticalScrollBar().setUnitIncrement(16);
+        settingsGroup.addTab(I18n.get("settings_general"), aiSettingsScroll);
+
+        // Tab 2: 检测规则 (sensitive rules + success patterns)
+        JTabbedPane rulesGroup = new JTabbedPane();
+        rulesGroup.addTab(I18n.get("tab_rules"), sensitiveRulesPanel);
         patternPanel = new PatternPanel(theme);
-        settingsGroup.addTab(I18n.get("tab_patterns"), patternPanel);
+        rulesGroup.addTab(I18n.get("tab_patterns"), patternPanel);
+        settingsGroup.addTab(I18n.get("settings_rules"), rulesGroup);
+
+        // Tab 3: 高级 (code repo + auth config + OOB config + browser config)
+        advancedGroup = new JTabbedPane();
+        advancedGroup.addTab(I18n.get("tab_repo"), codeRepoPanel);
+        advancedGroup.addTab(I18n.get("tab_auth_config"), authConfigPanel);
+        advancedGroup.addTab(I18n.get("tab_oob"), oobConfigPanel);
+        advancedGroup.addTab("MCP", mcpConfigPanel);
+        advancedGroup.addTab(I18n.get("tab_browser"), browserConfigPanel);
+        settingsGroup.addTab(I18n.get("settings_advanced"), advancedGroup);
+
+        // Tab 4: Bambda 构建器（对齐 Bambda++ 的完整过滤代码生成面板）
+        bambdaBuilderPanel = new BambdaBuilderPanel(api, configManager, repository);
+        settingsGroup.addTab(I18n.get("settings_bambda"), bambdaBuilderPanel);
 
         // Task Queue row selection -> load Chat & Repeater, switch to Chat tab
         taskQueuePanel.setOnTaskSelected(record -> {
@@ -332,6 +407,24 @@ public class ApiSentinelTab extends JPanel {
         // --- Split pane: table (top) + detail tabs (bottom) ---
         JSplitPane mainSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tablePanel, detailTabs);
         mainSplit.setDividerLocation(initialConfig.getMainSplitLocation());
+        // setDividerLocation is a no-op until the split pane has a real size
+        // (it's called above in the constructor, before layout). Without this,
+        // the divider falls back to the layout default and the bottom analysis
+        // panel gets squished to a sliver at the bottom. Re-apply once the
+        // component is realized, clamped so the detail panel keeps ≥220px.
+        final java.util.concurrent.atomic.AtomicBoolean dividerArmed =
+                new java.util.concurrent.atomic.AtomicBoolean(true);
+        mainSplit.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override public void componentResized(java.awt.event.ComponentEvent e) {
+                if (!dividerArmed.compareAndSet(true, false)) return;
+                int h = mainSplit.getHeight();
+                if (h <= 50) { dividerArmed.set(true); return; }
+                int loc = initialConfig.getMainSplitLocation();
+                loc = Math.min(loc, h - 220);
+                loc = Math.max(loc, 80);
+                mainSplit.setDividerLocation(loc);
+            }
+        });
         // 0.0 means the bottom component (detailTabs — where Repeater/Request-
         // Response lives) absorbs all extra space on window resize, while the
         // top table keeps whatever height the user last set. With the old 0.5
@@ -342,14 +435,118 @@ public class ApiSentinelTab extends JPanel {
         add(mainSplit, BorderLayout.CENTER);
 
         // Persist split pane positions with debounce
-        javax.swing.Timer mainSplitTimer = new javax.swing.Timer(500, e -> {
+        mainSplitTimerRef = new javax.swing.Timer(500, e -> {
             configManager.getConfig().setMainSplitLocation(mainSplit.getDividerLocation());
             configManager.saveConfig();
         });
-        mainSplitTimer.setRepeats(false);
-        mainSplit.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> mainSplitTimer.restart());
+        mainSplitTimerRef.setRepeats(false);
+        mainSplit.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> mainSplitTimerRef.restart());
 
+        // Hide detail tabs (AI 结果 / Repeater / 源码) when there are no
+        // APIs — they're meaningless without a selected endpoint. The split
+        // pane auto-expands the table to fill the freed space.
+        Runnable toggleDetailTabs = () -> SwingUtilities.invokeLater(() -> {
+            boolean hasEntries = !repository.findAll().isEmpty();
+            detailTabs.setVisible(hasEntries);
+            mainSplit.setDividerSize(hasEntries ? 6 : 0);
+            row2.setVisible(hasEntries);
+            // When detail becomes visible, re-clamp the divider so a stale
+            // bottom position (e.g. left over from when detail was hidden,
+            // or never applied at construction) doesn't squish it to a sliver.
+            if (hasEntries) {
+                int h = mainSplit.getHeight();
+                if (h > 50 && mainSplit.getDividerLocation() > h - 220) {
+                    mainSplit.setDividerLocation(Math.max(80, h - 220));
+                }
+            }
+        });
+        repository.addChangeListener(toggleDetailTabs);
+        toggleDetailTabs.run(); // initial state
 
+        // Wire empty-state quick-setup shortcuts to open settings dialog
+        // on the appropriate tab, or trigger the import dialog.
+        tablePanel.setOnToggleStatus(row -> presenterRef.onToggleStatus(new int[]{row}));
+        tablePanel.setOnSetupAction(actionId -> {
+            switch (actionId) {
+                case "import" -> {
+                    Window window = SwingUtilities.getWindowAncestor(this);
+                    ImportDialog dialog = new ImportDialog(window,
+                            presenterRef::onImportApis, presenterRef::scanHistory,
+                            theme);
+                    dialog.setVisible(true);
+                }
+                case "llm"  -> { openSettingsDialog(); settingsGroup.setSelectedIndex(0); }
+                case "auth" -> { openSettingsDialog(); settingsGroup.setSelectedIndex(2); advancedGroup.setSelectedIndex(1); }
+                case "code" -> { openSettingsDialog(); settingsGroup.setSelectedIndex(2); advancedGroup.setSelectedIndex(0); }
+                case "probe" -> { toolbarPanel.showDetectionMenu(); }
+                case "detection" -> { toolbarPanel.showDetectionMenu(); }
+                case "rules" -> { openSettingsDialog(); settingsGroup.setSelectedIndex(1); }
+                case "tools" -> {
+                    Window w = SwingUtilities.getWindowAncestor(this);
+                    Frame frame = w instanceof Frame f ? f : null;
+                    com.flechazo.apisentinel.ui.ToolManagementDialog.showDialog(
+                            frame, theme,
+                            configManager.getConfig().getDisabledTools(),
+                            configManager.getConfig().getToolsRequiringAuth(),
+                            (disabled, auth) -> {
+                                configManager.setDisabledTools(disabled);
+                                configManager.setToolsRequiringAuth(auth);
+                            });
+                }
+                case "mode" -> { toolbarPanel.toggleAgentMode(); }
+                case "browser" -> { openSettingsDialog(); settingsGroup.setSelectedIndex(0); }
+                case "oob"   -> { openSettingsDialog(); settingsGroup.setSelectedIndex(2); advancedGroup.setSelectedIndex(2); }
+                case "mcp"   -> { openSettingsDialog(); settingsGroup.setSelectedIndex(2); advancedGroup.setSelectedIndex(3); }
+                default -> {}
+            }
+        });
+
+        // Push initial setup status to empty state view (re-runnable; the
+        // Burp-MCP detection callback re-pushes once the probe completes).
+        pushSetupStatus();
+        mcpConfigPanel.setOnBurpMcpDetected((detected, port) -> {
+            burpMcpDetected = detected;
+            pushSetupStatus();
+        });
+        // Drive the (async, non-blocking) official-Burp-MCP detection now that
+        // the callback is wired, so the welcome-page chip + config preview update.
+        mcpConfigPanel.detectBurpMcpAsync();
+
+    }
+
+    /** Rebuild and push the welcome-page setup status. Called at init and
+     *  again whenever the Burp-MCP detection result lands. */
+    private void pushSetupStatus() {
+        var cfg = configManager.getConfig();
+        boolean llmOk = false;
+        String providerId = "ollama", model = "";
+        try {
+            java.nio.file.Path aiFile = com.flechazo.apisentinel.config.AppPaths.aiConfigFile();
+            if (java.nio.file.Files.exists(aiFile)) {
+                var obj = new com.google.gson.Gson().fromJson(
+                        java.nio.file.Files.readString(aiFile),
+                        com.google.gson.JsonObject.class);
+                if (obj.has("apiKey") && !obj.get("apiKey").getAsString().isEmpty()) llmOk = true;
+                if (obj.has("provider")) providerId = obj.get("provider").getAsString();
+                if (obj.has("model")) model = obj.get("model").getAsString();
+            }
+        } catch (Exception ignored) {}
+        tablePanel.setSetupStatus(new EmptyStateView.SetupStatus(
+                llmOk, providerId, model,
+                cfg.hasManualAuthSessions(),
+                cfg.getCodeRepos() != null && !cfg.getCodeRepos().isEmpty(),
+                cfg.isBrowserEnabled(),
+                com.flechazo.apisentinel.browser.BrowserManager.checkPrerequisites(),
+                cfg.getSensitiveRules().size(),
+                cfg.isOobEnabled(),
+                cfg.isSensitiveDetectionEnabled(),
+                cfg.isActiveProbeEnabled(),
+                toolbarPanel.isAgentMode(),
+                com.flechazo.apisentinel.ai.agent.tool.StandardToolRegistry.getToolCatalog().size(),
+                cfg.getDisabledTools().size(),
+                cfg.isMcpServerEnabled(),
+                burpMcpDetected
+        ));
     }
 
     private JPopupMenu buildMoreMenu(ApiSentinelPresenter presenter) {
@@ -357,13 +554,10 @@ public class ApiSentinelTab extends JPanel {
 
         menu.add(makeMenuItem(I18n.get("remove"), e -> presenter.onRemoveSelected(getSelectedRows())));
         menu.addSeparator();
-        menu.add(makeMenuItem(I18n.get("toggle_status"), e -> presenter.onToggleStatus(getSelectedRows())));
-        menu.add(makeMenuItem(I18n.get("toggle_vuln"), e -> presenter.onToggleVulnType(getSelectedRows())));
         menu.add(makeMenuItem(I18n.get("move_top"), e -> presenter.onMoveTestedToTop()));
         menu.add(makeMenuItem(I18n.get("add_scope"), e -> presenter.onAddDomainsToScope(getSelectedRows())));
         menu.addSeparator();
         menu.add(makeMenuItem(I18n.get("csv"), e -> presenter.onExportCsv()));
-        menu.add(makeMenuItem(I18n.get("report"), e -> presenter.onExportMarkdown()));
 
         JMenuItem fullReport = makeMenuItem(I18n.get("full_report"), e -> presenter.onExportFullReport());
         fullReport.setFont(theme.displayFont(Font.BOLD, 12f));
@@ -379,46 +573,13 @@ public class ApiSentinelTab extends JPanel {
         }));
         menu.addSeparator();
 
-        // Bambda code generation from selected table rows
-        JMenuItem bambdaMenuItem = makeMenuItem("生成 Bambda 过滤代码", e -> {
-            int[] rows = getSelectedRows();
-            if (rows.length == 0) return;
-            java.util.List<com.flechazo.apisentinel.model.ApiEntry> entries = new java.util.ArrayList<>();
-            for (int row : rows) {
-                var entry = ((com.flechazo.apisentinel.model.ApiEntryTableModel) tablePanel.getTable().getModel()).getEntryAt(row);
-                if (entry != null) entries.add(entry);
-            }
-            if (entries.isEmpty()) return;
-            String code = entries.size() == 1
-                    ? com.flechazo.apisentinel.util.BambdaCodeGen.generate(entries.get(0))
-                    : com.flechazo.apisentinel.util.BambdaCodeGen.generateBatch(entries);
-            java.awt.datatransfer.StringSelection sel = new java.awt.datatransfer.StringSelection(code);
-            java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
-            ThemedDialogs.info(this,
-                    "已复制 Bambda 过滤代码到剪贴板（" + entries.size() + " 个 API）",
-                    "Bambda");
-        });
-        menu.add(bambdaMenuItem);
-
-        menu.addSeparator();
-        // One-shot forensics for calibrating the palette against the user's
-        // real Burp theme — run once per theme (dark/light), share the file.
-        menu.add(makeMenuItem("主题诊断（导出配色信息）", e -> {
-            try {
-                java.nio.file.Path out = ThemeDiagnostics.dump(api);
-                ThemedDialogs.info(this, "主题诊断信息已导出到:\n" + out
-                        + "\n\n深色/亮色主题各导出一份即可。", "主题诊断");
-            } catch (Exception ex) {
-                ThemedDialogs.error(this, "导出失败: " + ex.getMessage(), "主题诊断");
-            }
-        }));
-        menu.addSeparator();
-        menu.add(makeMenuItem(I18n.get("lang_switch"), e -> {
-            I18n.toggle();
-            refreshI18nTexts();
-        }));
-
         return menu;
+    }
+
+    private void updateLangBtn(JButton btn) {
+        boolean zh = I18n.getLang() == I18n.Lang.ZH;
+        // Use ▶ marker on the current language: "▶中/EN" (Chinese active) or "中/▶EN" (English active)
+        btn.setText(zh ? "▶中/EN" : "中/▶EN");
     }
 
     private void updateAiBtnLabel(boolean agentMode) {
@@ -440,17 +601,37 @@ public class ApiSentinelTab extends JPanel {
             settingsDialog.setTitle("API Sentinel — " + I18n.get("tab_settings_group"));
         }
 
-        // Settings sub-tabs: [AI设置, 检测规则, 代码仓库, 越权配置, OOB, 成功模式]
-        settingsGroup.setTitleAt(0, I18n.get("tab_settings"));
-        settingsGroup.setTitleAt(1, I18n.get("tab_rules"));
-        settingsGroup.setTitleAt(2, I18n.get("tab_repo"));
-        settingsGroup.setTitleAt(3, I18n.get("tab_auth_config"));
-        settingsGroup.setTitleAt(4, I18n.get("tab_oob"));
-        settingsGroup.setTitleAt(5, I18n.get("tab_patterns"));
+        // Settings sub-tabs: [通用, 检测规则, 高级(含代码仓库/越权/OOB/MCP), Bambda]
+        int tabCount = settingsGroup.getTabCount();
+        if (tabCount > 0) settingsGroup.setTitleAt(0, I18n.get("settings_general"));
+        if (tabCount > 1) settingsGroup.setTitleAt(1, I18n.get("settings_rules"));
+        if (tabCount > 2) settingsGroup.setTitleAt(2, I18n.get("settings_advanced"));
+        if (tabCount > 3) settingsGroup.setTitleAt(3, I18n.get("settings_bambda"));
 
         // Row2 buttons
+        if (importBtn != null) importBtn.setText(I18n.get("import_api"));
         updateAiBtnLabel(toolbarPanel.isAgentMode());
         moreBtn.setText(I18n.get("more_actions"));
+
+        // Search field tooltip
+        for (Component c : getComponents()) {
+            if (c instanceof JTextField tf && tf.getToolTipText() != null) {
+                tf.setToolTipText(I18n.get("search_tooltip"));
+            }
+        }
+
+        // Source area placeholder — refresh if it's still showing the placeholder
+        if (sourceArea != null) {
+            String srcText = sourceArea.getText();
+            if (srcText != null && (srcText.contains("源码") || srcText.contains("Source code") || srcText.contains("index repos"))) {
+                sourceArea.setText(I18n.get("source_placeholder"));
+            }
+        }
+
+        // Chat window title
+        if (chatFrame != null) {
+            chatFrame.setTitle(I18n.get("chat_window_title"));
+        }
 
         // Rebuild More menu (items created at build time with I18n.get)
         moreMenu = buildMoreMenu(presenterRef);
@@ -459,7 +640,30 @@ public class ApiSentinelTab extends JPanel {
         toolbarPanel.refreshI18n();
         patternPanel.refreshI18n();
 
-
+        // Rebuild empty state view with new language
+        try {
+            var cfg = configManager.getConfig();
+            tablePanel.setSetupStatus(new EmptyStateView.SetupStatus(
+                    cfg != null, "", "",
+                    cfg.hasManualAuthSessions(),
+                    cfg.getCodeRepos() != null && !cfg.getCodeRepos().isEmpty(),
+                    cfg.isBrowserEnabled(),
+                    com.flechazo.apisentinel.browser.BrowserManager.checkPrerequisites(),
+                    cfg.getSensitiveRules().size(),
+                    cfg.isOobEnabled(),
+                    cfg.isSensitiveDetectionEnabled(),
+                    cfg.isActiveProbeEnabled(),
+                    toolbarPanel.isAgentMode(),
+                    com.flechazo.apisentinel.ai.agent.tool.StandardToolRegistry.getToolCatalog().size(),
+                    cfg.getDisabledTools().size(),
+                    cfg.isMcpServerEnabled(),
+                    burpMcpDetected
+            ));
+        } catch (Exception ex) {
+            // Log so we can see what's failing instead of silently swallowing
+            System.out.println("[I18n] EmptyStateView rebuild failed: " + ex.getMessage());
+            ex.printStackTrace();
+        }
 
         // Table column headers — getColumnName() resolves dynamically, just repaint header
         if (tableModelRef != null) tableModelRef.refreshI18n();
@@ -520,15 +724,34 @@ public class ApiSentinelTab extends JPanel {
     // === Public getters (all existing references preserved) ===
 
     public int[] getSelectedRows() { return tablePanel.getSelectedRows(); }
+
+    /** Generate a Bambda for the selected API rows in the given mode and copy it. */
     public ApiTablePanel getTablePanel() { return tablePanel; }
     public ToolbarPanel getToolbarPanel() { return toolbarPanel; }
     public FilterBar getFilterBar() { return filterBar; }
     public DomainFilterCombo getDomainFilterCombo() { return domainFilterCombo; }
     public AiAnalysisPanel getAiAnalysisPanel() { return aiAnalysisPanel; }
     public AiSettingsPanel getAiSettingsPanel() { return aiSettingsPanel; }
+    public BrowserConfigPanel getBrowserConfigPanel() { return browserConfigPanel; }
+    public JTabbedPane getAdvancedGroup() { return advancedGroup; }
+
+    /**
+     * Add a fun-features tab to the settings dialog.
+     * Called by ApiSentinelExtension when fun features are enabled.
+     */
+    public void addSettingsTab(String title, java.awt.Component component) {
+        settingsGroup.addTab(title, component);
+    }
     public SensitiveRulesPanel getSensitiveRulesPanel() { return sensitiveRulesPanel; }
     public CodeRepoPanel getCodeRepoPanel() { return codeRepoPanel; }
     public AuthConfigPanel getAuthConfigPanel() { return authConfigPanel; }
+    public McpConfigPanel getMcpConfigPanel() { return mcpConfigPanel; }
+
+    /** Refresh the API table + detail tabs after an external (MCP) mutation
+     *  that bypasses the repository's change notification. */
+    public void refreshTable() {
+        if (tableModelRef != null) tableModelRef.markRepositoryDirty();
+    }
     public RepeaterPanel getRepeaterPanel() { return repeaterPanel; }
     public AiChatPanel getAiChatPanel() { return aiChatPanel; }
     public TaskQueuePanel getTaskQueuePanel() { return taskQueuePanel; }
@@ -548,7 +771,7 @@ public class ApiSentinelTab extends JPanel {
             return;
         }
         if (chatFrame == null) {
-            chatFrame = new JFrame("API Sentinel — AI 对话");
+            chatFrame = new JFrame(I18n.get("chat_window_title"));
             // A bare JFrame isn't covered by the suite-tab theming pass — the
             // floating window's decorations/input areas fell back to default
             // Swing styling. Apply Burp's theme to the frame explicitly.
@@ -623,8 +846,8 @@ public class ApiSentinelTab extends JPanel {
                     "API Sentinel — " + I18n.get("tab_settings_group"),
                     java.awt.Dialog.ModalityType.MODELESS);
             settingsDialog.setContentPane(settingsGroup);
-            settingsDialog.setSize(920, 640);
-            settingsDialog.setMinimumSize(new Dimension(720, 480));
+            settingsDialog.setSize(1000, 720);
+            settingsDialog.setMinimumSize(new Dimension(760, 520));
             settingsDialog.setLocationRelativeTo(owner);
             settingsDialog.setDefaultCloseOperation(WindowConstants.HIDE_ON_CLOSE);
             new BurpTheme(api).apply(settingsDialog);
@@ -634,6 +857,11 @@ public class ApiSentinelTab extends JPanel {
     }
 
     public void shutdown() {
+        // Stop Swing Timers first — they live in the EDT's shared timer
+        // queue and their lambda closures pin the entire extension ClassLoader.
+        if (searchDebounceTimer != null) searchDebounceTimer.stop();
+        if (mainSplitTimerRef != null) mainSplitTimerRef.stop();
+
         Runnable[] steps = {
                 // Dispose the floating chat window first — Burp unloads the
                 // extension's ClassLoader, and a lingering native frame would

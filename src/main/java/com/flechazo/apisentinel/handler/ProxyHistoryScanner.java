@@ -9,7 +9,7 @@ import com.flechazo.apisentinel.matching.CompositeMatchEngine;
 import com.flechazo.apisentinel.model.ApiEntry;
 import com.flechazo.apisentinel.model.ApiStatus;
 import com.flechazo.apisentinel.repository.ApiRepository;
-import com.flechazo.apisentinel.ui.UiEventBus;
+import com.flechazo.apisentinel.event.UiEventBus;
 import com.flechazo.apisentinel.util.FocusFilter;
 import com.flechazo.apisentinel.util.UrlUtils;
 
@@ -62,6 +62,15 @@ public class ProxyHistoryScanner {
                     try {
                         String url = item.finalRequest().url();
                         String urlPath = UrlUtils.extractPath(url);
+                        // RPC-gateway APIs put their identity in the query
+                        // string (e.g. ?Action=RouteOmsService&InnerAction=
+                        // GetDataservicePeeringReferencedProjects), not the
+                        // path. The path alone (/api/v1/v3/api/) is identical
+                        // for every action, so a path-only FUZZY search never
+                        // matches the bare-name entries. Extract the query and
+                        // feed the 3-arg match so the action name is in the
+                        // search text — same as the live HttpTrafficHandler.
+                        String queryString = UrlUtils.extractQueryString(url);
 
                         if (UrlUtils.isStaticResource(urlPath)) continue;
 
@@ -73,7 +82,7 @@ public class ProxyHistoryScanner {
                                 configManager.getConfig().getFocusExcludeMethods())) continue;
 
                         String requestBody = item.finalRequest().bodyToString();
-                        List<ApiEntry> matches = matchEngine.match(urlPath, requestBody);
+                        List<ApiEntry> matches = matchEngine.match(urlPath, queryString, requestBody);
 
                         if (!matches.isEmpty()) {
                             ApiEntry matched = matches.get(0);
@@ -112,7 +121,7 @@ public class ProxyHistoryScanner {
                             matchCount++;
                         }
                     } catch (Exception e) {
-                        logger.debug("扫描历史记录项异常: %s", e.getMessage());
+                        logger.warn("扫描历史记录项异常: %s", e.getMessage());
                     }
                 }
 

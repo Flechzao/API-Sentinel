@@ -14,9 +14,14 @@ import java.util.List;
 public class SubmitReportTool implements AgentTool {
 
     private static final Gson GSON = new Gson();
+    /** Single-endpoint mode: the one verdict submitted. */
     private FinalVerdict verdict;
+    /** Multi-endpoint mode: verdicts keyed by api_path. */
+    private final java.util.Map<String, FinalVerdict> verdictsByPath = new java.util.concurrent.ConcurrentHashMap<>();
 
     public FinalVerdict getVerdict() { return verdict; }
+    /** Multi-endpoint: get all submitted verdicts keyed by api_path. */
+    public java.util.Map<String, FinalVerdict> getVerdictsByPath() { return verdictsByPath; }
 
     @Override
     public String preExecute(String argumentsJson, ToolContext ctx) {
@@ -40,17 +45,40 @@ public class SubmitReportTool implements AgentTool {
                     + "already found for the current endpoint.\"}";
         }
 
-        // Gate 2: if payloads were generated, they must be verified
+        // P2-2: parse the submitted verdict's finding count once, fail-closed.
+        // Pre-P2-2 this was computed only at Gate 4, and Gate 2's
+        // `generated > 0` guard meant an LLM that skipped generate_payloads
+        // and hand-wrote payloads straight to send_request could submit a
+        // multi-finding report after verifying just one — the coverage gate
+        // never fired because generatedPayloadCount was 0. Computing the
+        // real finding count here lets Gate 2 bind to behaviour (findings
+        // claimed) rather than to a tool name (was generate_payloads called).
+        int findingCount;
+        try {
+            findingCount = countFindings(argumentsJson);
+        } catch (IllegalArgumentException e) {
+            return "{\"error\": \"Report rejected — could not parse the submitted verdict JSON: "
+                    + escapeJson(e.getMessage())
+                    + ". The submit_report schema requires a top-level object with optional "
+                    + "confirmed_vulns / suspected_vulns arrays. Fix the JSON and resubmit.\"}";
+        }
+
+        // Gate 2: findings must be verified. Pre-P2-2 this only fired when
+        // generate_payloads had been called (generatedPayloadCount > 0), so a
+        // model that bypassed generate_payloads and sent payloads via
+        // send_request directly skipped the gate entirely (generated=0 →
+        // required=0 → guard false). Now driven by the actual finding count:
+        // report N findings → must verify min(N, 5) via real-request tools.
         int generated = state.generatedPayloadCount();
         int verified = state.verifiedPayloadCount();
-        int required = Math.min(generated, 5); // cap at 5
-        if (generated > 0 && verified < required) {
-            return String.format("{\"error\": \"Report rejected — you generated %d test "
-                    + "payload(s) via generate_payloads but only verified %d via "
-                    + "send_request. Findings must be grounded in real request/response "
-                    + "evidence. Call send_request on at least %d of them (prioritize "
-                    + "the most promising) before submitting.\"}",
-                    generated, verified, required);
+        int required = Math.min(Math.max(generated, findingCount), 5); // cap at 5
+        if (verified < required) {
+            return String.format("{\"error\": \"Report rejected — your verdict reports %d "
+                    + "finding(s) but only %d payload(s) were verified via real-request tools "
+                    + "(send_request / verify_* / active_probe / test_auth_bypass). Findings "
+                    + "must be grounded in real request/response evidence. Verify at least %d "
+                    + "of them (prioritise the most promising) before submitting.\"}",
+                    findingCount, verified, required);
         }
 
         // Gate 3: coverage check — ensure key dimensions are addressed
@@ -75,7 +103,14 @@ public class SubmitReportTool implements AgentTool {
         // was ever called, the findings are pure code-reading with zero request
         // evidence — reject and force the agent to construct & send real requests
         // (even for code-found findings; abnormal/blocked responses still count).
-        int findingCount = countFindings(argumentsJson);
+        //
+        // P0-9 hardening: countFindings is fail-closed — a malformed
+        // verdict JSON throws rather than returning 0, because the pre-P0-9
+        // silent-zero behaviour let Gate 4 rubber-stamp malformed reports
+        // straight through (the strongest defense gate had a silent bypass
+        // whenever the model produced unparseable JSON). P2-2: the count is
+        // now computed once above Gate 2 (so Gate 2 can bind to it) and
+        // reused here — no second parse.
         if (findingCount > 0 && !sentAnyRequest(state)) {
             return String.format("{\"error\": \"Report rejected — you reported %d finding(s) "
                     + "but never sent any real request (send_request / verify_* / active_probe / "
@@ -106,21 +141,56 @@ public class SubmitReportTool implements AgentTool {
         return false;
     }
 
-    /** Count confirmed + suspected vulns in the submitted verdict JSON. */
+    /** Count confirmed + suspected vulns in the submitted verdict JSON.
+     *
+     *  <p>P0-9: throws {@link IllegalArgumentException} on malformed input
+     *  (fail-closed). The pre-P0-9 behaviour of silently returning 0 on
+     *  any parse error let Gate 4 — the strongest defense in this tool —
+     *  rubber-stamp malformed reports straight through: a model producing
+     *  invalid JSON would pass the gate with {@code findingCount == 0},
+     *  bypass the "must send real requests" check, and whatever
+     *  downstream code consumed the verdict would either crash or accept
+     *  it uncritically.
+     *
+     *  <p>Callers that want the fail-closed behaviour should let the
+     *  exception propagate; callers that want leniency (none today) catch
+     *  and handle explicitly. */
     private int countFindings(String argumentsJson) {
-        try {
-            JsonObject obj = com.google.gson.JsonParser.parseString(argumentsJson).getAsJsonObject();
-            int n = 0;
-            if (obj.has("confirmed_vulns") && obj.get("confirmed_vulns").isJsonArray()) {
-                n += obj.getAsJsonArray("confirmed_vulns").size();
-            }
-            if (obj.has("suspected_vulns") && obj.get("suspected_vulns").isJsonArray()) {
-                n += obj.getAsJsonArray("suspected_vulns").size();
-            }
-            return n;
-        } catch (Exception e) {
-            return 0;
+        return parseFindingCount(argumentsJson);
+    }
+
+    /** Pure static form of {@link #countFindings} — exposed package-private
+     *  so {@code SubmitReportToolP09Test} (and future fuzz tests) can pin
+     *  the fail-closed contract without constructing a ToolContext. */
+    static int parseFindingCount(String argumentsJson) {
+        if (argumentsJson == null || argumentsJson.isBlank()) {
+            throw new IllegalArgumentException("empty verdict JSON");
         }
+        com.google.gson.JsonElement parsed;
+        try {
+            parsed = com.google.gson.JsonParser.parseString(argumentsJson);
+        } catch (com.google.gson.JsonSyntaxException e) {
+            throw new IllegalArgumentException("invalid JSON: " + e.getMessage(), e);
+        }
+        if (parsed == null || !parsed.isJsonObject()) {
+            throw new IllegalArgumentException("verdict must be a JSON object, got "
+                    + (parsed == null ? "null" : parsed.getClass().getSimpleName()));
+        }
+        JsonObject obj = parsed.getAsJsonObject();
+        int n = 0;
+        if (obj.has("confirmed_vulns")) {
+            if (!obj.get("confirmed_vulns").isJsonArray()) {
+                throw new IllegalArgumentException("confirmed_vulns must be an array");
+            }
+            n += obj.getAsJsonArray("confirmed_vulns").size();
+        }
+        if (obj.has("suspected_vulns")) {
+            if (!obj.get("suspected_vulns").isJsonArray()) {
+                throw new IllegalArgumentException("suspected_vulns must be an array");
+            }
+            n += obj.getAsJsonArray("suspected_vulns").size();
+        }
+        return n;
     }
 
     @Override
@@ -154,6 +224,12 @@ public class SubmitReportTool implements AgentTool {
         riskEnum.add("HIGH"); riskEnum.add("MEDIUM"); riskEnum.add("LOW"); riskEnum.add("SAFE");
         riskProp.add("enum", riskEnum);
         props.add("overall_risk", riskProp);
+
+        // Multi-endpoint: optional api_path to attribute the report to a specific endpoint
+        JsonObject apiPathProp = new JsonObject();
+        apiPathProp.addProperty("type", "string");
+        apiPathProp.addProperty("description", "多端点联合分析时必填：本报告对应的接口路径（如 POST /api/users/search）。单端点分析时可省略。");
+        props.add("api_path", apiPathProp);
 
         JsonObject confirmedProp = new JsonObject();
         confirmedProp.addProperty("type", "array");
@@ -221,7 +297,12 @@ public class SubmitReportTool implements AgentTool {
                             getStr(v, "type"), getStr(v, "title"),
                             getStr(v, "evidence"), getStr(v, "payload_used"),
                             getStr(v, "response"), getStr(v, "verify_command"),
-                            getStr(v, "identity_proof"), getStr(v, "cvss")));
+                            getStr(v, "identity_proof"), getStr(v, "cvss"),
+                            // Bind the finding to the exact payload send the LLM
+                            // cited (from the execution_index send_request returned),
+                            // enabling VerdictValidator's O(1) index binding.
+                            v.has("cited_execution_index") && v.get("cited_execution_index").isJsonPrimitive()
+                                    ? v.get("cited_execution_index").getAsInt() : -1));
                 }
             }
 
@@ -240,7 +321,15 @@ public class SubmitReportTool implements AgentTool {
             }
 
             verdict = new FinalVerdict(overallRisk, confirmed, suspected, summary, recommendations, 0);
-            return "{\"status\": \"Report submitted successfully.\"}";
+
+            // Multi-endpoint mode: store verdict keyed by api_path if provided
+            String apiPath = getStr(args, "api_path");
+            if (!apiPath.isEmpty()) {
+                verdictsByPath.put(apiPath, verdict);
+            }
+
+            return "{\"status\": \"Report submitted successfully"
+                + (apiPath.isEmpty() ? "" : " for " + apiPath) + "\"}";
         } catch (Exception e) {
             return "{\"error\": \"Failed to parse report: " + escapeJson(e.getMessage()) + "\"}";
         }

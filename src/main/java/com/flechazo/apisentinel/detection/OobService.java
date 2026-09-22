@@ -125,7 +125,7 @@ public class OobService {
             }
             return hits;
         } catch (Exception e) {
-            if (logger != null) logger.debug("[OOB] 轮询异常: %s", e.getMessage());
+            if (logger != null) logger.warn("[OOB] 轮询异常: %s", e.getMessage());
             return Collections.emptyList();
         }
     }
@@ -158,10 +158,10 @@ public class OobService {
                     interactionCallback.accept(hits);
                 }
             } catch (Exception e) {
-                if (logger != null) logger.debug("[OOB] 后台轮询异常: %s", e.getMessage());
+                if (logger != null) logger.warn("[OOB] 后台轮询异常: %s", e.getMessage());
             }
         }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
-        if (logger != null) logger.info("[OOB] 后台轮询已启动 (间隔 %dms)", intervalMs);
+        if (logger != null) logger.debug("[OOB] 后台轮询已启动 (间隔 %dms)", intervalMs);
     }
 
     public void shutdown() {

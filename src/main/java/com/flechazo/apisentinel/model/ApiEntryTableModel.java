@@ -174,7 +174,7 @@ public class ApiEntryTableModel extends AbstractTableModel {
             case COL_METHOD -> {
                 if (!val.isEmpty()) repository.updateMethod(e.getApiPath(), val);
             }
-            case COL_DOMAIN -> repository.updateDomain(e.getApiPath(), val);
+            case COL_DOMAIN -> repository.updateDomain(e, val);
             case COL_STATE -> {
                 // The ⚙ analyzing badge prefixes the cell text; strip it so
                 // the ApiStatus match below still succeeds mid-analysis.

@@ -46,7 +46,10 @@ public class ConfigStore {
         Path file = resolve(filename);
         try {
             ensureDir();
-            Files.writeString(file, content);
+            // P1-5: secrets (API keys, auth cookies in data.json) live in
+            // the config dir; writing with 600 perms instead of the
+            // umask-inherited 644 keeps them out of group/other read.
+            AppPaths.writePrivate(file, content);
             if (logger != null) logger.debug("配置已保存: %s", filename);
             return true;
         } catch (IOException e) {

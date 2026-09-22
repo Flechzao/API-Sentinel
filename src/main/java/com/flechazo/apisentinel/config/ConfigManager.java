@@ -106,6 +106,22 @@ public class ConfigManager {
         notifyAndSave();
     }
 
+    public void setSkipAllPermissions(boolean enabled) {
+        config.setSkipAllPermissions(enabled);
+        System.setProperty("api-sentinel.skip-permissions", String.valueOf(enabled));
+        notifyAndSave();
+    }
+
+    public void setDisabledTools(java.util.Set<String> tools) {
+        config.setDisabledTools(tools);
+        notifyAndSave();
+    }
+
+    public void setToolsRequiringAuth(java.util.Set<String> tools) {
+        config.setToolsRequiringAuth(tools);
+        notifyAndSave();
+    }
+
     public void setWafRetryEnabled(boolean enabled) {
         config.setWafRetryEnabled(enabled);
         notifyAndSave();
@@ -146,10 +162,115 @@ public class ConfigManager {
         notifyAndSave();
     }
 
+    public void setMcpAllowActiveTools(boolean allow) {
+        config.setMcpAllowActiveTools(allow);
+        notifyAndSave();
+    }
 
+    public void setMcpAuthToken(String token) {
+        config.setMcpAuthToken(token);
+        notifyAndSave();
+    }
 
-    public void addListener(Consumer<AppConfig> listener) {
-        listeners.add(listener);
+    public void setMcpRequireAuth(boolean require) {
+        config.setMcpRequireAuth(require);
+        notifyAndSave();
+    }
+
+    public void setModelTieringEnabled(boolean b) {
+        config.setModelTieringEnabled(b);
+        notifyAndSave();
+    }
+
+    public void setFilterOptionsPreflightEnabled(boolean b) {
+        config.setFilterOptionsPreflightEnabled(b);
+        notifyAndSave();
+    }
+
+    public void setBambdaHighlightEnabled(boolean b) {
+        config.setBambdaHighlightEnabled(b);
+        notifyAndSave();
+    }
+
+    public void setBambdaHighlightKeywords(String k) {
+        config.setBambdaHighlightKeywords(k);
+        notifyAndSave();
+    }
+
+    // --- F-1: Browser capabilities ---
+    public void setBrowserEnabled(boolean enabled) {
+        config.setBrowserEnabled(enabled);
+        notifyAndSave();
+    }
+
+    // --- P1-6: Raw-credentials opt-in ---
+    public boolean isIncludeRawCredentialsInLlm() {
+        return config.isIncludeRawCredentialsInLlm();
+    }
+
+    public void setIncludeRawCredentialsInLlm(boolean include) {
+        config.setIncludeRawCredentialsInLlm(include);
+        notifyAndSave();
+    }
+
+    public boolean isFirstRunDisclosureDone() {
+        return config.isFirstRunDisclosureDone();
+    }
+
+    public void setFirstRunDisclosureDone(boolean done) {
+        config.setFirstRunDisclosureDone(done);
+        notifyAndSave();
+    }
+
+    public void setBrowserHeadless(boolean headless) {
+        config.setBrowserHeadless(headless);
+        notifyAndSave();
+    }
+
+    public void setBrowserChromePath(String path) {
+        config.setBrowserChromePath(path);
+        notifyAndSave();
+    }
+
+    public void setBrowserMaxPages(int pages) {
+        config.setBrowserMaxPages(pages);
+        notifyAndSave();
+    }
+
+    public void setBrowserFrontendUrl(String url) {
+        config.setBrowserFrontendUrl(url);
+        notifyAndSave();
+    }
+
+    // --- Fun features ---
+    public void setFunFeaturesEnabled(boolean enabled) {
+        config.setFunFeaturesEnabled(enabled);
+        notifyAndSave();
+    }
+
+    public void setEffectsEnabled(boolean enabled) {
+        config.setEffectsEnabled(enabled);
+        notifyAndSave();
+    }
+
+    public com.google.gson.JsonObject getFunFeaturesConfig() {
+        try {
+            String json = configStore.read("fun-features.json");
+            if (json != null && !json.isBlank()) {
+                return com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+            }
+        } catch (Exception e) {
+            if (logger != null) logger.warn("加载趣味功能配置失败: %s", e.getMessage());
+        }
+        return new com.google.gson.JsonObject();
+    }
+
+    public void setFunFeaturesConfig(com.google.gson.JsonObject config) {
+        try {
+            configStore.write("fun-features.json", GSON.toJson(config));
+        } catch (Exception e) {
+            if (logger != null) logger.warn("保存趣味功能配置失败: %s", e.getMessage());
+        }
     }
 
     private void notifyAndSave() {
@@ -168,6 +289,23 @@ public class ConfigManager {
     }
 
     public void saveConfig() {
+        // Legacy wrapper: delegates to {@link #trySaveConfig()} and
+        // discards the result. Retained so existing call sites
+        // (ApiSentinelTab, AuthConfigPanel, OobConfigPanel, …) keep
+        // compiling without edits.
+        trySaveConfig();
+    }
+
+    /** P0-12 #8: explicit-success form of {@link #saveConfig}. Pre-P0-12,
+     *  the save was {@code void} and silently swallowed every failure
+     *  (IOException, ConfigStore returning false, serialization bugs).
+     *  The in-memory {@code config} had already been mutated by the
+     *  caller before saveConfig() was invoked, so a failed write left
+     *  the next launch reading the stale on-disk copy with no signal
+     *  that anything had been lost. With this method the caller gets a
+     *  boolean and can surface a warning (e.g. "配置保存失败，请检查磁盘")
+     *  instead of letting the user believe their change was persisted. */
+    public boolean trySaveConfig() {
         try {
             JsonObject obj = new JsonObject();
             obj.addProperty("matchMode", config.getMatchMode().name());
@@ -193,8 +331,22 @@ public class ConfigManager {
             // Auth session config
             obj.addProperty("authSessionACookie", config.getAuthSessionACookie());
             obj.addProperty("authSessionALabel", config.getAuthSessionALabel());
+            obj.addProperty("authSessionAAuthHeaders", config.getAuthSessionAAuthHeaders());
+            obj.addProperty("authSessionADomain", config.getAuthSessionADomain());
+            obj.addProperty("authSessionALevel", config.getAuthSessionALevel());
+            obj.addProperty("authSessionAGroup", config.getAuthSessionAGroup());
             obj.addProperty("authSessionBCookie", config.getAuthSessionBCookie());
             obj.addProperty("authSessionBLabel", config.getAuthSessionBLabel());
+            obj.addProperty("authSessionBAuthHeaders", config.getAuthSessionBAuthHeaders());
+            obj.addProperty("authSessionBDomain", config.getAuthSessionBDomain());
+            obj.addProperty("authSessionBLevel", config.getAuthSessionBLevel());
+            obj.addProperty("authSessionBGroup", config.getAuthSessionBGroup());
+            obj.addProperty("authSessionCCookie", config.getAuthSessionCCookie());
+            obj.addProperty("authSessionCLabel", config.getAuthSessionCLabel());
+            obj.addProperty("authSessionCAuthHeaders", config.getAuthSessionCAuthHeaders());
+            obj.addProperty("authSessionCDomain", config.getAuthSessionCDomain());
+            obj.addProperty("authSessionCLevel", config.getAuthSessionCLevel());
+            obj.addProperty("authSessionCGroup", config.getAuthSessionCGroup());
 
             // Split pane positions
             obj.addProperty("mainSplitLocation", config.getMainSplitLocation());
@@ -212,6 +364,8 @@ public class ConfigManager {
 
             // LLM context window (tokens) — used to size the Agent loop's budget
             obj.addProperty("contextWindowTokens", config.getContextWindowTokens());
+            obj.addProperty("dailyBudgetTokens", config.getDailyBudgetTokens());
+            obj.addProperty("perRequestMaxTokens", config.getPerRequestMaxTokens());
 
             // AgentController auto-pilot (background auto-scan), separate from
             // the per-entry Pipeline/Agent mode toggle
@@ -221,6 +375,14 @@ public class ConfigManager {
             // WAF block detection + encoded-variant retry
             obj.addProperty("wafDetectionEnabled", config.isWafDetectionEnabled());
             obj.addProperty("codeExecutionAutoApprove", config.isCodeExecutionAutoApprove());
+            obj.addProperty("skipAllPermissions", config.isSkipAllPermissions());
+            // Tool management
+            com.google.gson.JsonArray disabledArr = new com.google.gson.JsonArray();
+            for (String t : config.getDisabledTools()) disabledArr.add(t);
+            obj.add("disabledTools", disabledArr);
+            com.google.gson.JsonArray authArr = new com.google.gson.JsonArray();
+            for (String t : config.getToolsRequiringAuth()) authArr.add(t);
+            obj.add("toolsRequiringAuth", authArr);
             obj.addProperty("wafRetryEnabled", config.isWafRetryEnabled());
 
             // Active probes (CORS/JWT/CRLF/NoSQL programmatic verification)
@@ -244,13 +406,47 @@ public class ConfigManager {
             // MCP server (expose API-Sentinel to external Claude)
             obj.addProperty("mcpServerEnabled", config.isMcpServerEnabled());
             obj.addProperty("mcpServerPort", config.getMcpServerPort());
+            obj.addProperty("mcpAllowActiveTools", config.isMcpAllowActiveTools());
+            obj.addProperty("mcpAuthToken", config.getMcpAuthToken());
+            obj.addProperty("mcpRequireAuth", config.isMcpRequireAuth());
+            obj.addProperty("modelTieringEnabled", config.isModelTieringEnabled());
+            obj.addProperty("filterOptionsPreflightEnabled", config.isFilterOptionsPreflightEnabled());
+            obj.addProperty("bambdaHighlightEnabled", config.isBambdaHighlightEnabled());
+            obj.addProperty("bambdaHighlightKeywords", config.getBambdaHighlightKeywords());
             obj.addProperty("organizerAutoSendEnabled", config.isOrganizerAutoSendEnabled());
             obj.addProperty("auditHighRiskOnly", config.isAuditHighRiskOnly());
             obj.addProperty("analysisReuseWindowMinutes", config.getAnalysisReuseWindowMinutes());
 
-            configStore.write(CONFIG_FILENAME, GSON.toJson(obj));
+            // F-1: Browser capabilities
+            obj.addProperty("browserEnabled", config.isBrowserEnabled());
+            obj.addProperty("browserHeadless", config.isBrowserHeadless());
+            obj.addProperty("browserChromePath", config.getBrowserChromePath());
+            obj.addProperty("browserMaxPages", config.getBrowserMaxPages());
+            obj.addProperty("browserFrontendUrl", config.getBrowserFrontendUrl());
+            obj.addProperty("agentMode", config.isAgentMode());
+            obj.addProperty("batchConcurrent", config.isBatchConcurrent());
+            obj.addProperty("funFeaturesEnabled", config.isFunFeaturesEnabled());
+            obj.addProperty("effectsEnabled", config.isEffectsEnabled());
+
+            // P1-6: sensitive-data opt-in. Default false = redact
+            // credentials before the LLM sees them. firstRunDisclosureDone
+            // tracks whether the user has seen the "credentials go to the
+            // LLM" warning at least once.
+            obj.addProperty("includeRawCredentialsInLlm", config.isIncludeRawCredentialsInLlm());
+            obj.addProperty("firstRunDisclosureDone", config.isFirstRunDisclosureDone());
+
+            // P0-12 #8: honour the boolean ConfigStore.write() returns —
+            // a false (disk full / read-only / permission denied) is
+            // treated as a failure the same way an exception is, so the
+            // caller sees a single unified "did this persist?" answer.
+            boolean ok = configStore.write(CONFIG_FILENAME, GSON.toJson(obj));
+            if (!ok && logger != null) {
+                logger.error("保存配置失败: ConfigStore.write 返回 false (磁盘可能已满或只读)");
+            }
+            return ok;
         } catch (Exception e) {
             if (logger != null) logger.error("保存配置失败: %s", e.getMessage());
+            return false;
         }
     }
 
@@ -300,8 +496,22 @@ public class ConfigManager {
             // Auth session config
             if (obj.has("authSessionACookie")) config.setAuthSessionACookie(obj.get("authSessionACookie").getAsString());
             if (obj.has("authSessionALabel")) config.setAuthSessionALabel(obj.get("authSessionALabel").getAsString());
+            if (obj.has("authSessionAAuthHeaders")) config.setAuthSessionAAuthHeaders(obj.get("authSessionAAuthHeaders").getAsString());
+            if (obj.has("authSessionADomain")) config.setAuthSessionADomain(obj.get("authSessionADomain").getAsString());
+            if (obj.has("authSessionALevel")) config.setAuthSessionALevel(obj.get("authSessionALevel").getAsString());
+            if (obj.has("authSessionAGroup")) config.setAuthSessionAGroup(obj.get("authSessionAGroup").getAsString());
             if (obj.has("authSessionBCookie")) config.setAuthSessionBCookie(obj.get("authSessionBCookie").getAsString());
             if (obj.has("authSessionBLabel")) config.setAuthSessionBLabel(obj.get("authSessionBLabel").getAsString());
+            if (obj.has("authSessionBAuthHeaders")) config.setAuthSessionBAuthHeaders(obj.get("authSessionBAuthHeaders").getAsString());
+            if (obj.has("authSessionBDomain")) config.setAuthSessionBDomain(obj.get("authSessionBDomain").getAsString());
+            if (obj.has("authSessionBLevel")) config.setAuthSessionBLevel(obj.get("authSessionBLevel").getAsString());
+            if (obj.has("authSessionBGroup")) config.setAuthSessionBGroup(obj.get("authSessionBGroup").getAsString());
+            if (obj.has("authSessionCCookie")) config.setAuthSessionCCookie(obj.get("authSessionCCookie").getAsString());
+            if (obj.has("authSessionCLabel")) config.setAuthSessionCLabel(obj.get("authSessionCLabel").getAsString());
+            if (obj.has("authSessionCAuthHeaders")) config.setAuthSessionCAuthHeaders(obj.get("authSessionCAuthHeaders").getAsString());
+            if (obj.has("authSessionCDomain")) config.setAuthSessionCDomain(obj.get("authSessionCDomain").getAsString());
+            if (obj.has("authSessionCLevel")) config.setAuthSessionCLevel(obj.get("authSessionCLevel").getAsString());
+            if (obj.has("authSessionCGroup")) config.setAuthSessionCGroup(obj.get("authSessionCGroup").getAsString());
 
             // Split pane positions
             if (obj.has("mainSplitLocation")) config.setMainSplitLocation(obj.get("mainSplitLocation").getAsInt());
@@ -315,10 +525,27 @@ public class ConfigManager {
             if (obj.has("oobInternalTestUrl")) config.setOobInternalTestUrl(obj.get("oobInternalTestUrl").getAsString());
             if (obj.has("highlightEnabled")) config.setHighlightEnabled(obj.get("highlightEnabled").getAsBoolean());
             if (obj.has("contextWindowTokens")) config.setContextWindowTokens(obj.get("contextWindowTokens").getAsInt());
+            if (obj.has("dailyBudgetTokens")) config.setDailyBudgetTokens(obj.get("dailyBudgetTokens").getAsInt());
+            if (obj.has("perRequestMaxTokens")) config.setPerRequestMaxTokens(obj.get("perRequestMaxTokens").getAsInt());
             if (obj.has("autoScanEnabled")) config.setAutoScanEnabled(obj.get("autoScanEnabled").getAsBoolean());
                         if (obj.has("cascadeHuntEnabled")) config.setCascadeHuntEnabled(obj.get("cascadeHuntEnabled").getAsBoolean());
             if (obj.has("wafDetectionEnabled")) config.setWafDetectionEnabled(obj.get("wafDetectionEnabled").getAsBoolean());
             if (obj.has("codeExecutionAutoApprove")) config.setCodeExecutionAutoApprove(obj.get("codeExecutionAutoApprove").getAsBoolean());
+            if (obj.has("skipAllPermissions")) {
+                config.setSkipAllPermissions(obj.get("skipAllPermissions").getAsBoolean());
+                System.setProperty("api-sentinel.skip-permissions",
+                        String.valueOf(obj.get("skipAllPermissions").getAsBoolean()));
+            }
+            if (obj.has("disabledTools") && obj.get("disabledTools").isJsonArray()) {
+                java.util.Set<String> set = java.util.concurrent.ConcurrentHashMap.newKeySet();
+                for (var e : obj.getAsJsonArray("disabledTools")) set.add(e.getAsString());
+                config.setDisabledTools(set);
+            }
+            if (obj.has("toolsRequiringAuth") && obj.get("toolsRequiringAuth").isJsonArray()) {
+                java.util.Set<String> set = java.util.concurrent.ConcurrentHashMap.newKeySet();
+                for (var e : obj.getAsJsonArray("toolsRequiringAuth")) set.add(e.getAsString());
+                config.setToolsRequiringAuth(set);
+            }
             if (obj.has("wafRetryEnabled")) config.setWafRetryEnabled(obj.get("wafRetryEnabled").getAsBoolean());
             if (obj.has("activeProbeEnabled")) config.setActiveProbeEnabled(obj.get("activeProbeEnabled").getAsBoolean());
             if (obj.has("blindVerificationEnabled")) config.setBlindVerificationEnabled(obj.get("blindVerificationEnabled").getAsBoolean());
@@ -330,11 +557,31 @@ public class ConfigManager {
             if (obj.has("maxCodeFollowHops")) config.setMaxCodeFollowHops(obj.get("maxCodeFollowHops").getAsInt());
             if (obj.has("mcpServerEnabled")) config.setMcpServerEnabled(obj.get("mcpServerEnabled").getAsBoolean());
             if (obj.has("mcpServerPort")) config.setMcpServerPort(obj.get("mcpServerPort").getAsInt());
+            if (obj.has("mcpAllowActiveTools")) config.setMcpAllowActiveTools(obj.get("mcpAllowActiveTools").getAsBoolean());
+            if (obj.has("mcpAuthToken")) config.setMcpAuthToken(obj.get("mcpAuthToken").getAsString());
+            if (obj.has("mcpRequireAuth")) config.setMcpRequireAuth(obj.get("mcpRequireAuth").getAsBoolean());
+            if (obj.has("modelTieringEnabled")) config.setModelTieringEnabled(obj.get("modelTieringEnabled").getAsBoolean());
+            if (obj.has("filterOptionsPreflightEnabled")) config.setFilterOptionsPreflightEnabled(obj.get("filterOptionsPreflightEnabled").getAsBoolean());
+            if (obj.has("bambdaHighlightEnabled")) config.setBambdaHighlightEnabled(obj.get("bambdaHighlightEnabled").getAsBoolean());
+            if (obj.has("bambdaHighlightKeywords")) config.setBambdaHighlightKeywords(obj.get("bambdaHighlightKeywords").getAsString());
             if (obj.has("organizerAutoSendEnabled")) config.setOrganizerAutoSendEnabled(obj.get("organizerAutoSendEnabled").getAsBoolean());
             if (obj.has("auditHighRiskOnly")) config.setAuditHighRiskOnly(obj.get("auditHighRiskOnly").getAsBoolean());
             if (obj.has("analysisReuseWindowMinutes")) config.setAnalysisReuseWindowMinutes(obj.get("analysisReuseWindowMinutes").getAsInt());
 
-            if (logger != null) logger.info("已加载配置: %s", CONFIG_FILENAME);
+            // F-1: Browser capabilities
+            if (obj.has("browserEnabled")) config.setBrowserEnabled(obj.get("browserEnabled").getAsBoolean());
+            if (obj.has("includeRawCredentialsInLlm")) config.setIncludeRawCredentialsInLlm(obj.get("includeRawCredentialsInLlm").getAsBoolean());
+            if (obj.has("firstRunDisclosureDone")) config.setFirstRunDisclosureDone(obj.get("firstRunDisclosureDone").getAsBoolean());
+            if (obj.has("browserHeadless")) config.setBrowserHeadless(obj.get("browserHeadless").getAsBoolean());
+            if (obj.has("browserChromePath")) config.setBrowserChromePath(obj.get("browserChromePath").getAsString());
+            if (obj.has("browserMaxPages")) config.setBrowserMaxPages(obj.get("browserMaxPages").getAsInt());
+            if (obj.has("browserFrontendUrl")) config.setBrowserFrontendUrl(obj.get("browserFrontendUrl").getAsString());
+            if (obj.has("agentMode")) config.setAgentMode(obj.get("agentMode").getAsBoolean());
+            if (obj.has("batchConcurrent")) config.setBatchConcurrent(obj.get("batchConcurrent").getAsBoolean());
+            if (obj.has("funFeaturesEnabled")) config.setFunFeaturesEnabled(obj.get("funFeaturesEnabled").getAsBoolean());
+            if (obj.has("effectsEnabled")) config.setEffectsEnabled(obj.get("effectsEnabled").getAsBoolean());
+
+            if (logger != null) logger.debug("已加载配置: %s", CONFIG_FILENAME);
         } catch (Exception e) {
             if (logger != null) logger.warn("加载配置失败，使用默认值: %s", e.getMessage());
         }
@@ -368,7 +615,7 @@ public class ConfigManager {
                     }
                 }
             }
-            if (logger != null) logger.info("已加载 %d 条敏感信息规则", rules.size());
+            if (logger != null) logger.debug("已加载 %d 条敏感信息规则", rules.size());
         } catch (Exception e) {
             if (logger != null) logger.error("加载敏感信息规则失败", e);
         }

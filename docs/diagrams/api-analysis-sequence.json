@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "API Sentinel 安全分析流程",
+    "locale": "zh-CN",
+    "viewBox": [1200, 880],
+    "column_fit": "spread",
+    "views": [
+      { "id": "passive-phase", "label": "被动检测阶段", "focus": ["proxy", "handler", "passive", "repo"], "note": "流量捕获后自动进行被动检测，结果落库" },
+      { "id": "agent-analysis", "label": "AI Agent 分析", "focus": ["agent", "tools", "llm", "evidence"], "note": "Agent 调用工具进行智能分析和验证" },
+      { "id": "active-verify", "label": "主动验证阶段", "focus": ["agent", "tools", "target", "evidence", "repo"], "note": "生成 payload 并发送请求验证漏洞" }
+    ]
+  },
+  "participants": [
+    { "id": "proxy", "type": "external", "label": "Burp Proxy", "sublabel": "流量入口" },
+    { "id": "handler", "type": "frontend", "label": "TrafficHandler", "sublabel": "流量捕获" },
+    { "id": "passive", "type": "backend", "label": "被动检测", "sublabel": "规则引擎" },
+    { "id": "repo", "type": "database", "label": "ApiRepository", "sublabel": "数据存储" },
+    { "id": "agent", "type": "backend", "label": "AgentLoop", "sublabel": "ReAct 循环" },
+    { "id": "tools", "type": "frontend", "label": "工具注册表", "sublabel": "50+ 工具" },
+    { "id": "llm", "type": "cloud", "label": "LLM", "sublabel": "推理引擎" },
+    { "id": "evidence", "type": "database", "label": "证据存储", "sublabel": "FindingStore" },
+    { "id": "target", "type": "external", "label": "目标 API", "sublabel": "被测应用" }
+  ],
+  "segments": [
+    { "from": 160, "to": 300, "label": "被动检测" },
+    { "from": 320, "to": 540, "label": "AI 分析" },
+    { "from": 560, "to": 780, "label": "主动验证" }
+  ],
+  "messages": [
+    { "id": "m1", "from": "proxy", "to": "handler", "y": 180, "label": "HTTP 流量", "variant": "emphasis" },
+    { "id": "m2", "from": "handler", "to": "passive", "y": 215, "label": "触发检测", "variant": "default" },
+    { "id": "m3", "from": "passive", "to": "handler", "y": 250, "label": "SQL错误 · JWT · CORS · 敏感信息", "variant": "return" },
+    { "id": "m4", "from": "handler", "to": "repo", "y": 285, "label": "findings 落库", "variant": "default" },
+
+    { "id": "m5", "from": "repo", "to": "agent", "y": 340, "label": "触发分析", "variant": "emphasis" },
+    { "id": "m6", "from": "agent", "to": "llm", "y": 380, "label": "请求推理", "variant": "default" },
+    { "id": "m7", "from": "llm", "to": "agent", "y": 415, "label": "tool_call: heuristic_scan", "variant": "return" },
+    { "id": "m8", "from": "agent", "to": "tools", "y": 450, "label": "执行工具", "variant": "default" },
+    { "id": "m9", "from": "tools", "to": "evidence", "y": 485, "label": "收集证据", "variant": "default" },
+    { "id": "m10", "from": "agent", "to": "llm", "y": 520, "label": "分析结果 → 下一步决策", "variant": "default" },
+
+    { "id": "m11", "from": "agent", "to": "tools", "y": 580, "label": "send_request + payload", "variant": "emphasis" },
+    { "id": "m12", "from": "tools", "to": "target", "y": 615, "label": "攻击请求", "variant": "security" },
+    { "id": "m13", "from": "target", "to": "tools", "y": 650, "label": "响应", "variant": "return" },
+    { "id": "m14", "from": "tools", "to": "evidence", "y": 685, "label": "记录 payload + 响应", "variant": "default" },
+    { "id": "m15", "from": "agent", "to": "llm", "y": 720, "label": "判定漏洞", "variant": "default" },
+    { "id": "m16", "from": "agent", "to": "evidence", "y": 755, "label": "写入 verdict", "variant": "emphasis" },
+    { "id": "m17", "from": "evidence", "to": "repo", "y": 790, "label": "confirmed_vulns 落库", "variant": "default" }
+  ],
+  "activations": [
+    { "participant": "handler", "from": 175, "to": 290, "type": "frontend" },
+    { "participant": "passive", "from": 210, "to": 255, "type": "backend" },
+    { "participant": "agent", "from": 335, "to": 760, "type": "backend" },
+    { "participant": "llm", "from": 375, "to": 725, "type": "cloud" },
+    { "participant": "tools", "from": 445, "to": 690, "type": "frontend" },
+    { "participant": "target", "from": 610, "to": 655, "type": "external" },
+    { "participant": "evidence", "from": 480, "to": 795, "type": "database" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "被动检测", "items": ["零请求：所有检测基于已有流量", "38 条内置规则 + 用户自定义规则", "findings 自动落库供后续分析"] },
+    { "dot": "emerald", "title": "AI 分析", "items": ["ReAct 循环：推理 → 工具调用 → 观察 → 决策", "50+ 工具按需加载", "证据链全程追踪"] },
+    { "dot": "rose", "title": "主动验证", "items": ["基于假设生成 payload", "发送真实请求验证漏洞", "verdict 经证据秤仲裁"] }
+  ]
+}

@@ -20,7 +20,8 @@ import java.util.stream.Collectors;
 /** 危险 sink 映射表——定义 7 类 sink（SQL/CMD/文件/反序列化/SSRF/弱加密/不安全随机）的正则签名。 */
 public class SinkMap {
 
-    public enum SinkType { SQL, COMMAND, FILE_ACCESS, DESERIALIZATION, SSRF, CRYPTO, INSECURE_RANDOM }
+    public enum SinkType { SQL, COMMAND, FILE_ACCESS, DESERIALIZATION, SSRF, CRYPTO, INSECURE_RANDOM,
+                           XXE, SSTI, CRLF, OPEN_REDIRECT, NOSQL }
 
     public record SinkEntry(SinkType type, String file, int line, String snippet, String className) {}
 
@@ -100,12 +101,12 @@ public class SinkMap {
                     }
                 });
             } catch (IOException e) {
-                if (logger != null) logger.debug("[SinkMap] 扫描仓库失败: %s", e.getMessage());
+                if (logger != null) logger.warn("[SinkMap] 扫描仓库失败: %s", e.getMessage());
             }
         }
 
         if (logger != null) {
-            logger.info("[SinkMap] 扫描完成: %d 个 sink（SQL=%d, CMD=%d, FILE=%d, DESER=%d, SSRF=%d, CRYPTO=%d, RNG=%d）",
+            logger.info("[SinkMap] 扫描完成: %d 个 sink（SQL=%d, CMD=%d, FILE=%d, DESER=%d, SSRF=%d, CRYPTO=%d, RNG=%d, XXE=%d, SSTI=%d, CRLF=%d, REDIRECT=%d, NOSQL=%d）",
                     all.size(),
                     all.stream().filter(s -> s.type() == SinkType.SQL).count(),
                     all.stream().filter(s -> s.type() == SinkType.COMMAND).count(),
@@ -113,7 +114,12 @@ public class SinkMap {
                     all.stream().filter(s -> s.type() == SinkType.DESERIALIZATION).count(),
                     all.stream().filter(s -> s.type() == SinkType.SSRF).count(),
                     all.stream().filter(s -> s.type() == SinkType.CRYPTO).count(),
-                    all.stream().filter(s -> s.type() == SinkType.INSECURE_RANDOM).count());
+                    all.stream().filter(s -> s.type() == SinkType.INSECURE_RANDOM).count(),
+                    all.stream().filter(s -> s.type() == SinkType.XXE).count(),
+                    all.stream().filter(s -> s.type() == SinkType.SSTI).count(),
+                    all.stream().filter(s -> s.type() == SinkType.CRLF).count(),
+                    all.stream().filter(s -> s.type() == SinkType.OPEN_REDIRECT).count(),
+                    all.stream().filter(s -> s.type() == SinkType.NOSQL).count());
         }
 
         return new SinkMap(byClass, all);
@@ -154,8 +160,25 @@ public class SinkMap {
         try {
             Path file = AppPaths.sinkMapFile();
             Files.createDirectories(file.getParent());
-            Files.writeString(file, gson.toJson(allSinks));
-        } catch (Exception ignored) {}
+            // P1-5: keep the config directory consistent — 600 perms on
+            // every file, even ones (like the sink map) that aren't
+            // themselves secret.
+            AppPaths.writePrivate(file, gson.toJson(allSinks));
+        } catch (Exception e) {
+            // P0-12 hardening: the pre-P0-12 `catch (Exception ignored)`
+            // swallowed save failures entirely, so a disk-full / read-only
+            // mount / permission error left the in-memory SinkMap out of
+            // sync with the on-disk copy with no signal to the operator.
+            // The next load would silently read stale data and the user
+            // would never know. Logging at WARN makes the failure visible
+            // in the Burp extension console without aborting the caller
+            // (callers don't expect save() to throw, and changing the
+            // signature to rethrow ripples through ~12 call sites).
+            com.flechazo.apisentinel.logging.LeveledLogger staticLogger =
+                    new com.flechazo.apisentinel.logging.LeveledLogger(null);
+            staticLogger.warn("[SinkMap] 持久化失败: %s (下次加载将读到旧数据)",
+                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        }
     }
 
     public static SinkMap load(Gson gson) {
@@ -201,7 +224,10 @@ public class SinkMap {
                 Pattern.compile("createNativeQuery\\s*\\("),
                 Pattern.compile("createQuery\\s*\\([^)]*\\+"),
                 Pattern.compile("\\.prepareStatement\\s*\\(\\s*[^\"\\s]"),
-                Pattern.compile("String\\.format\\s*\\(\\s*\"(?:SELECT|INSERT|UPDATE|DELETE)")
+                Pattern.compile("String\\.format\\s*\\(\\s*\"(?:SELECT|INSERT|UPDATE|DELETE)"),
+                // MyBatis ${} interpolation (unsafe, should use #{})
+                Pattern.compile("\\$\\{[^}]*\\}.*(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)", Pattern.CASE_INSENSITIVE),
+                Pattern.compile("Statement\\.execute\\s*\\(")
         ));
 
         map.put(SinkType.COMMAND, List.of(
@@ -258,6 +284,54 @@ public class SinkMap {
                 Pattern.compile("Math\\.random\\s*\\("),
                 Pattern.compile("random\\.(?:randint|random|choice|randrange)\\s*\\("),
                 Pattern.compile("ThreadLocalRandom\\.current\\s*\\(")
+        ));
+
+        // XML External Entity (XXE) — XML parsers without disabling external entities
+        map.put(SinkType.XXE, List.of(
+                Pattern.compile("DocumentBuilderFactory\\.newInstance"),
+                Pattern.compile("SAXParserFactory\\.newInstance"),
+                Pattern.compile("XMLInputFactory\\.newInstance"),
+                Pattern.compile("SAXReader\\s*\\("),
+                Pattern.compile("Unmarshaller\\.unmarshal"),
+                Pattern.compile("XMLReaderFactory\\.createXMLReader")
+        ));
+
+        // Server-Side Template Injection (SSTI) — template engines with user input
+        map.put(SinkType.SSTI, List.of(
+                Pattern.compile("Configuration\\.\\s*getTemplate"),
+                Pattern.compile("TemplateEngine\\.\\s*process"),
+                Pattern.compile("VelocityEngine"),
+                Pattern.compile("velocity\\.evaluate"),
+                Pattern.compile("Mustache\\.\\s*render|mustache\\.to_html"),
+                Pattern.compile("Handlebars\\.\\s*compile"),
+                Pattern.compile("pebbleEngine\\.\\s*render|\\{\\{.*\\}\\}.*render")
+        ));
+
+        // CRLF / HTTP Header Injection — response header with user-controlled input
+        map.put(SinkType.CRLF, List.of(
+                Pattern.compile("(?:setHeader|addHeader|setHeader)\\s*\\([^)]*\\+"),
+                Pattern.compile("addCookie\\s*\\([^)]*\\+"),
+                Pattern.compile("sendRedirect\\s*\\([^)]*\\+"),
+                Pattern.compile("response\\.setHeader\\s*\\([^)]*\\+"),
+                Pattern.compile("HttpServletResponse.*\\.setHeader\\s*\\([^)]*\\+")
+        ));
+
+        // Open Redirect — redirect URL from user input without whitelist
+        map.put(SinkType.OPEN_REDIRECT, List.of(
+                Pattern.compile("sendRedirect\\s*\\(\\s*[^\"\\s]"),
+                Pattern.compile("setHeader\\s*\\(\\s*\"Location\"\\s*,\\s*[^\"\\s]"),
+                Pattern.compile("RedirectView\\s*\\(\\s*[^\"\\s]"),
+                Pattern.compile("response\\.sendRedirect")
+        ));
+
+        // NoSQL Injection — NoSQL query with user-controlled operators
+        map.put(SinkType.NOSQL, List.of(
+                Pattern.compile("BasicDBObject"),
+                Pattern.compile("\\$where"),
+                Pattern.compile("MongoTemplate\\.\\s*(?:find|findOne|save|remove)"),
+                Pattern.compile("collection\\.find\\s*\\([^)]*\\+"),
+                Pattern.compile("\\.find\\s*\\(\\s*req\\."),
+                Pattern.compile("createQuery\\s*\\(.*\\$")
         ));
 
         return Collections.unmodifiableMap(map);

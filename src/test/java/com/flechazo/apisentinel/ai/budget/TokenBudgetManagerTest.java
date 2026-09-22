@@ -1,6 +1,7 @@
 package com.flechazo.apisentinel.ai.budget;
 
 import org.junit.jupiter.api.Test;
+import com.flechazo.apisentinel.ai.budget.BudgetMode;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -17,6 +18,7 @@ class TokenBudgetManagerTest {
         // Budget = 1000, 10 threads each reserve 150 concurrently. Without
         // atomic reservation, several would pass while combined usage > budget.
         TokenBudgetManager mgr = new TokenBudgetManager(1000, 1000);
+        mgr.setBudgetMode(BudgetMode.ENFORCE);
         int threads = 10;
         int perReservation = 150;
         ExecutorService pool = Executors.newFixedThreadPool(threads);
@@ -50,6 +52,7 @@ class TokenBudgetManagerTest {
     @Test
     void recordUsage_thenCanProceedRespectsAccumulated() {
         TokenBudgetManager mgr = new TokenBudgetManager(1000, 1000);
+        mgr.setBudgetMode(BudgetMode.ENFORCE);
         mgr.recordUsage("claude", 600);
         assertFalse(mgr.canProceed(500), "600+500 > 1000, should be denied");
         assertTrue(mgr.canProceed(400), "600+400 = 1000, should pass");
@@ -58,6 +61,7 @@ class TokenBudgetManagerTest {
     @Test
     void perRequestMax_capsSingleReservation() {
         TokenBudgetManager mgr = new TokenBudgetManager(100_000, 1000);
+        mgr.setBudgetMode(BudgetMode.ENFORCE);
         assertFalse(mgr.canProceed(1001));
         assertTrue(mgr.canProceed(1000));
     }

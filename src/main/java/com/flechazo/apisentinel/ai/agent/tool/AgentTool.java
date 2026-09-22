@@ -17,6 +17,20 @@ public interface AgentTool {
     String execute(String argumentsJson);
 
     /**
+     * Whether this tool is side-effect-free and reads only shared session state,
+     * making it safe to run concurrently with other read-only tools returned in the
+     * same LLM response. Tools that send a request, call an LLM, or mutate
+     * cross-tool state (send_request, generate_payloads, submit_report, chain_hunter,
+     * verify_*, …) must return {@code false} so they always run sequentially in
+     * submission order.
+     * <p>Default {@code false} is the safe choice: a newly added tool never silently
+     * parallelises until it opts in here.
+     */
+    default boolean isReadOnly() {
+        return false;
+    }
+
+    /**
      * Pre-execution hook: gate checks, permission validation, state inspection.
      * Called before {@link #execute} on every tool invocation.
      *

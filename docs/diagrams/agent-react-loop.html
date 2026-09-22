@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>API Sentinel · Agent ReAct 工具循环</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;padding:14px 16px;background:#fff;max-width:1080px;margin:0 auto;}
+h1{font-size:16px;color:#2c3e50;margin-bottom:12px;text-align:center;}
+.layer{border-radius:10px;padding:10px 12px;margin-bottom:0;}
+.layer--blue{background:linear-gradient(135deg,#e8f4fd,#d1ecf9);}
+.layer--orange{background:linear-gradient(135deg,#fff3e0,#ffe0b2);}
+.layer--purple{background:linear-gradient(135deg,#f3e5f5,#e1bee7);}
+.layer--pink{background:linear-gradient(135deg,#fce4ec,#f8bbd0);}
+.layer--green{background:linear-gradient(135deg,#e8f5e9,#c8e6c9);}
+.layer-title{font-weight:700;font-size:13px;line-height:1.5;min-height:22px;margin-bottom:8px;display:flex;align-items:center;gap:6px;color:#333;}
+.node{background:#fff;border:2px solid #4a90d9;border-radius:7px;padding:8px 10px;text-align:center;font-size:10.5px;line-height:1.45;box-shadow:0 1px 4px rgba(0,0,0,.05);width:100%;min-height:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;}
+.node b{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;width:100%;font-size:11px;line-height:1.35;color:#222;}
+.node .desc{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;color:#555;}
+.node--blue{border-color:#4a90d9;}
+.node--orange{border-color:#e67e22;}
+.node--purple{border-color:#9b59b6;}
+.node--green{border-color:#27ae60;}
+.node--pink{border-color:#c62828;}
+.arrow-row{text-align:center;font-size:16px;color:#4a90d9;height:24px;line-height:24px;}
+.arrow-down{text-align:center;font-size:13px;color:#4a90d9;height:16px;line-height:16px;}
+.grid-cols{display:grid;grid-template-columns:repeat(var(--cols,2),minmax(0,1fr));gap:8px;align-items:stretch;}
+.col-stack{display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.5);border-radius:8px;padding:8px 10px;height:100%;}
+.note{background:#fff8e1;border:1.5px dashed #ffb300;border-radius:6px;padding:6px 10px;font-size:10px;line-height:1.5;color:#5a4600;margin-top:8px;}
+</style>
+</head>
+<body>
+<h1>🤖 API Sentinel · Agent ReAct 工具循环</h1>
+
+<div class="layer layer--blue">
+  <div class="layer-title">🎯 启动</div>
+  <div class="grid-cols" style="--cols:1;">
+    <div class="node node--blue"><b>选中接口 → Agent 启动</b><span class="desc">LLM 自主决定分析路径 · 最多 50 轮安全断路器</span></div>
+  </div>
+</div>
+<div class="arrow-row">▼</div>
+
+<div class="layer layer--orange">
+  <div class="layer-title">🔄 ReAct 自主循环（每轮三步）</div>
+  <div class="grid-cols" style="--cols:3;">
+    <div class="node node--orange"><b>① 上下文管理</b><span class="desc">剥离过期 thinking + 两段式分级压缩 · 保留最近 15 个结果</span></div>
+    <div class="node node--orange"><b>② 调用 LLM</b><span class="desc">temperature=0.3 · thinking_budget=6000 · 200s 超时容错</span></div>
+    <div class="node node--orange"><b>③ 解析响应</b><span class="desc">tool_calls / 纯文本 / MAX_TOKENS 截断续写</span></div>
+  </div>
+</div>
+<div class="arrow-row">▼ &nbsp;选择工具&nbsp; ▼</div>
+
+<div class="layer layer--purple">
+  <div class="layer-title">🧰 40+ 工具（按类别 · 执行后追加结果回循环）</div>
+  <div class="grid-cols" style="--cols:3;">
+    <div class="node node--purple"><b>🔍 侦察 / 代码理解（免费）</b><span class="desc">heuristic_scan · search_source_code · audit_codebase · find_definition / find_callers · grep_repo</span></div>
+    <div class="node node--purple"><b>🧠 AI 推理（耗 LLM）</b><span class="desc">analyze_traffic · generate_payloads</span></div>
+    <div class="node node--purple"><b>💥 实测验证（免费发请求）</b><span class="desc">send_request · test_auth_bypass · verify_* 系列（盲注 / XSS / SSTI / 路径穿越）</span></div>
+  </div>
+  <div class="note"><b>并行执行：</b>一轮内多个 tool_call 若全是只读工具（read_file / grep_repo / search_source_code…）则并发执行；只要含发请求 / 调 LLM / 改状态的工具即退回串行。</div>
+</div>
+<div class="arrow-row">▼ &nbsp;提交报告 submit_report&nbsp; ▼</div>
+
+<div class="layer layer--pink">
+  <div class="layer-title">🚪 submit_report 多层门禁（preExecute · 任一不通过即拒绝，补齐后重提）</div>
+  <div class="grid-cols" style="--cols:4;">
+    <div class="node node--pink"><b>heuristic_scan 门禁</b><span class="desc">必须至少扫过一次</span></div>
+    <div class="node node--pink"><b>audit_codebase 门禁</b><span class="desc">配了仓库必须先做全局白盒审计</span></div>
+    <div class="node node--pink"><b>验证门禁</b><span class="desc">生成 N 个 payload 至少实测 min(N,5) 个</span></div>
+    <div class="node node--pink"><b>真实请求门禁</b><span class="desc">有 confirmed/suspected 必须真发过请求</span></div>
+  </div>
+</div>
+<div class="arrow-row">▼ &nbsp;全部通过&nbsp; ▼</div>
+
+<div class="layer layer--green">
+  <div class="layer-title">✅ 结束</div>
+  <div class="grid-cols" style="--cols:1;">
+    <div class="node node--green"><b>通过门禁 → 输出报告 / verdict</b><span class="desc">立即结束循环，不再执行其后工具</span></div>
+  </div>
+</div>
+
+</body>
+</html>

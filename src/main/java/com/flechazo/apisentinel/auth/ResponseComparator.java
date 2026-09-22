@@ -122,8 +122,46 @@ public class ResponseComparator {
      * Determine the verdict based on similarity score.
      */
     public static AuthTestResult.AuthVerdict verdictFromSimilarity(double similarity) {
-        if (similarity >= 0.85) return AuthTestResult.AuthVerdict.VULNERABLE;
-        if (similarity >= 0.60) return AuthTestResult.AuthVerdict.SUSPICIOUS;
+        return verdictFromSimilarity(similarity, Integer.MAX_VALUE);
+    }
+
+    /**
+     * P2-2: length-adaptive verdict thresholds. 3-gram Jaccard on a very
+     * short body (e.g. {@code {"code":0}}) is statistically noisy — any
+     * same-shaped small envelope scores high, so a swapped-auth response
+     * that merely shares the response wrapper can look like an auth bypass.
+     * When the baseline body is under ~200 chars, require a higher bar
+     * (0.95 / 0.80) before calling it VULNERABLE / SUSPICIOUS; keep the
+     * standard 0.85 / 0.60 for full-size bodies where 3-gram signal is
+     * meaningful. The single-arg overload passes {@link Integer#MAX_VALUE}
+     * so legacy callers keep the 0.85 / 0.60 behaviour.
+     */
+    public static AuthTestResult.AuthVerdict verdictFromSimilarity(double similarity, int baselineBodyLen) {
+        boolean shortBody = baselineBodyLen < 200;
+        double vuln = shortBody ? 0.95 : 0.85;
+        double susp = shortBody ? 0.80 : 0.60;
+        if (similarity >= vuln) return AuthTestResult.AuthVerdict.VULNERABLE;
+        if (similarity >= susp) return AuthTestResult.AuthVerdict.SUSPICIOUS;
         return AuthTestResult.AuthVerdict.SAFE;
+    }
+
+    /**
+     * P2-2: extract the response body length (bytes past the header
+     * terminator) from a raw HTTP response string, for the
+     * length-adaptive {@link #verdictFromSimilarity(double, int)}.
+     * Returns 0 if the response is null/empty or header-only.
+     */
+    public static int bodyLengthOf(String rawResponse) {
+        if (rawResponse == null || rawResponse.isEmpty()) return 0;
+        int sep = rawResponse.indexOf("\r\n\r\n");
+        int bodyStart;
+        if (sep >= 0) {
+            bodyStart = sep + 4;
+        } else {
+            sep = rawResponse.indexOf("\n\n");
+            bodyStart = sep >= 0 ? sep + 2 : 0;
+        }
+        if (bodyStart >= rawResponse.length()) return 0;
+        return rawResponse.length() - bodyStart;
     }
 }

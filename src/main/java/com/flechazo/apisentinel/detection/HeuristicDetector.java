@@ -2,6 +2,8 @@ package com.flechazo.apisentinel.detection;
 
 import com.flechazo.apisentinel.logging.LeveledLogger;
 
+import com.flechazo.apisentinel.util.HttpMessageUtils;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -97,6 +99,7 @@ public class HeuristicDetector {
             detectPrivateIpLeak(rawResponse, findings);
             detectCorsMisconfiguration(rawRequest, rawResponse, findings);
             detectMissingSecurityHeaders(rawResponse, statusCode, findings);
+            detectOpenRedirect(method, url, rawRequest, statusCode, findings);
             findings.addAll(JwtSecurityDetector.detectJwtIssues(rawResponse));
         }
 
@@ -105,12 +108,21 @@ public class HeuristicDetector {
             detectRequestSmuggling(rawRequest, findings);
             detectDangerousUpload(rawRequest, statusCode, findings);
             detectDeserializationRisk(rawRequest, findings);
+            detectNoSqlOperators(rawRequest, findings);
+            detectSensitiveParamsInUrl(rawRequest, findings);
+            detectGraphQL(url, rawRequest, rawResponse, findings);
+            detectMassAssignment(method, rawRequest, rawResponse, statusCode, findings);
+            detectExcessiveDataExposure(rawResponse, url, findings);
         }
 
         if (!findings.isEmpty()) {
-            // Log path only (not full URL) to avoid leaking internal hostnames
+            // Log path only (not full URL) to avoid leaking internal hostnames.
+            // Debug level — the findings are stored on the ApiEntry via
+            // addPassiveFindingIfAbsent (which deduplicates), so the log
+            // is just diagnostic. RPC gateway patterns send many requests
+            // to the same URL, which would spam the output at info level.
             String logPath = com.flechazo.apisentinel.util.UrlUtils.extractPath(url);
-            logger.info("[Heuristic] %s %s: 检测到 %d 个问题", method, logPath, findings.size());
+            logger.debug("[Heuristic] %s %s: 检测到 %d 个问题", method, logPath, findings.size());
         }
 
         return findings;
@@ -348,6 +360,181 @@ public class HeuristicDetector {
             }
         }
         return null;
+    }
+
+    // ======================== New detection patterns ========================
+
+    private static final Pattern NOSQL_OPERATOR = Pattern.compile(
+            "(?i)\\$(ne|gt|gte|lt|lte|regex|where|in|nin|or|and|mod|size|exists|type)\\s*[\\(:]");
+    private static final Pattern GRAPHQL_PATTERN = Pattern.compile(
+            "(?i)(query\\s*\\{|mutation\\s*\\{|subscription\\s*\\{|__schema|__typename|application/graphql)");
+    private static final Pattern SENSITIVE_PARAM_IN_URL = Pattern.compile(
+            "(?i)[?&](password|passwd|pwd|secret|token|apikey|api_key|access_token|refresh_token|private_key)\\s*=");
+
+    private void detectNoSqlOperators(String rawRequest, List<HeuristicFinding> findings) {
+        String body = HttpMessageUtils.bodyOf(rawRequest);
+        if (body == null || body.isEmpty()) return;
+        var m = NOSQL_OPERATOR.matcher(body);
+        if (m.find()) {
+            findings.add(new HeuristicFinding(
+                    "MEDIUM", "NoSQL注入", "请求体含 NoSQL 查询操作符",
+                    "发现 $" + m.group(1) + " 操作符：未经过滤的查询操作符可绕过认证",
+                    "过滤请求体中以 $ 开头的字段，或使用白名单校验查询条件"
+            ));
+        }
+    }
+
+    private void detectSensitiveParamsInUrl(String rawRequest, List<HeuristicFinding> findings) {
+        String reqLine = rawRequest.split("\r?\n")[0];
+        var m = SENSITIVE_PARAM_IN_URL.matcher(reqLine);
+        if (m.find()) {
+            findings.add(new HeuristicFinding(
+                    "MEDIUM", "信息泄露", "敏感参数出现在 URL 中",
+                    "参数 " + m.group(1) + " 通过 URL 传输，可能被日志/Referer 泄露",
+                    "将敏感参数移至 POST body，使用 HTTPS 传输"
+            ));
+        }
+    }
+
+    private void detectGraphQL(String url, String rawRequest, String rawResponse,
+                                List<HeuristicFinding> findings) {
+        // Check URL path for /graphql
+        if (url != null && url.toLowerCase().contains("/graphql")) {
+            findings.add(new HeuristicFinding(
+                    "INFO", "GraphQL", "检测到 GraphQL 端点",
+                    "URL 路径包含 /graphql",
+                    "检查是否启用了 introspection 查询、是否有深度/复杂度限制"
+            ));
+        }
+        // Check request body for GraphQL query/mutation
+        String body = rawRequest != null ? HttpMessageUtils.bodyOf(rawRequest) : null;
+        if (body != null && !body.isEmpty()) {
+            var m = GRAPHQL_PATTERN.matcher(body);
+            if (m.find()) {
+                findings.add(new HeuristicFinding(
+                        "INFO", "GraphQL", "请求体含 GraphQL 查询",
+                        "匹配到 " + m.group(),
+                        "检查 introspection 是否禁用、查询深度是否有限制"
+                ));
+            }
+        }
+        // Check response for GraphQL introspection results
+        if (rawResponse != null && rawResponse.contains("__schema")) {
+            findings.add(new HeuristicFinding(
+                    "MEDIUM", "GraphQL", "GraphQL introspection 已启用",
+                    "响应包含 __schema，允许结构内省查询",
+                    "生产环境禁用 introspection"
+            ));
+        }
+    }
+
+    private void detectOpenRedirect(String method, String url, String rawRequest,
+                                     int statusCode, List<HeuristicFinding> findings) {
+        // Open redirect: 3xx status + redirect-like parameter in URL
+        if (statusCode >= 300 && statusCode < 400) {
+            String reqLine = rawRequest != null ? rawRequest.split("\r?\n")[0] : "";
+            if (reqLine.matches("(?i).*(redirect|next|url|return|callback|goto|continue)\\s*=")) {
+                findings.add(new HeuristicFinding(
+                        "MEDIUM", "开放重定向", "3xx 响应 + URL 含重定向参数",
+                        statusCode + " 重定向 + 请求含 redirect/next/url 参数",
+                        "对重定向目标做白名单校验，不直接使用用户提供的 URL"
+                ));
+            }
+        }
+    }
+
+    // ======================== Mass Assignment ========================
+
+    /** 常见的 Mass Assignment 危险字段 */
+    private static final Pattern MASS_ASSIGNMENT_FIELDS = Pattern.compile(
+            "(?i)[\"'](" +
+            "is_?admin|is_?root|is_?superuser|is_?privileged|role|roles|permission|permissions|" +
+            "is_?active|is_?verified|is_?enabled|is_?banned|is_?locked|" +
+            "balance|credit|price|amount|discount|cost|" +
+            "created_?at|updated_?at|deleted_?at|is_?deleted|" +
+            "owner_?id|user_?id|tenant_?id" +
+            ")[\"']\\s*[:=]");
+
+    private void detectMassAssignment(String method, String rawRequest, String rawResponse,
+                                       int statusCode, List<HeuristicFinding> findings) {
+        // Only check write operations
+        if (!method.equalsIgnoreCase("POST") && !method.equalsIgnoreCase("PUT")
+                && !method.equalsIgnoreCase("PATCH")) {
+            return;
+        }
+
+        String body = HttpMessageUtils.bodyOf(rawRequest);
+        if (body == null || body.isEmpty()) return;
+
+        // Check for suspicious field names in request body
+        var m = MASS_ASSIGNMENT_FIELDS.matcher(body);
+        if (m.find() && statusCode >= 200 && statusCode < 300) {
+            findings.add(new HeuristicFinding(
+                    "HIGH", "Mass Assignment",
+                    "请求体包含可能被直接赋值的敏感字段: " + m.group(1),
+                    "写操作请求体发现 " + m.group(1) + " 字段且服务器返回成功（" + statusCode + "），"
+                    + "可能存在批量赋值漏洞。攻击者可提交未预期字段修改对象属性。",
+                    "使用白名单只允许客户端可修改的字段，使用 DTO 模式隔离输入与内部模型"
+            ));
+        }
+    }
+
+    // ======================== Excessive Data Exposure ========================
+
+    /** 敏感字段模式（响应中不应出现的字段） */
+    private static final Pattern SENSITIVE_RESPONSE_FIELDS = Pattern.compile(
+            "(?i)[\"'](" +
+            "password|passwd|pwd|secret|api_?key|apikey|access_?token|refresh_?token|" +
+            "private_?key|encryption_?key|session_?id|auth_?token|" +
+            "ssn|social_?security|credit_?card|card_?number|cvv|cvv2|" +
+            "phone|mobile|email|address|date_?of_?birth|dob" +
+            ")[\"']\\s*:");
+
+    private void detectExcessiveDataExposure(String rawResponse, String url,
+                                              List<HeuristicFinding> findings) {
+        if (rawResponse == null || rawResponse.isEmpty()) return;
+
+        // Only check JSON responses
+        String lowerResp = rawResponse.toLowerCase();
+        if (!lowerResp.contains("content-type: application/json")) return;
+
+        int bodyStart = rawResponse.indexOf("\r\n\r\n");
+        if (bodyStart < 0) bodyStart = rawResponse.indexOf("\n\n");
+        if (bodyStart < 0) return;
+
+        String body = rawResponse.substring(bodyStart);
+
+        // Check for sensitive fields in response
+        var m = SENSITIVE_RESPONSE_FIELDS.matcher(body);
+        List<String> sensitiveFields = new ArrayList<>();
+        while (m.find() && sensitiveFields.size() < 5) {
+            sensitiveFields.add(m.group(1));
+        }
+
+        if (!sensitiveFields.isEmpty()) {
+            String path = url != null ? com.flechazo.apisentinel.util.UrlUtils.extractPath(url) : "unknown";
+            findings.add(new HeuristicFinding(
+                    "MEDIUM", "Excessive Data Exposure",
+                    "API 响应包含 " + sensitiveFields.size() + " 个敏感字段",
+                    "路径 " + path + " 的响应中发现敏感字段: "
+                    + String.join(", ", sensitiveFields) + "。"
+                    + "API 返回了过多数据，客户端可能依赖这些字段进行过滤。",
+                    "使用 DTO 模式只返回必要字段，避免直接序列化内部模型。"
+                    + "特别避免返回密码、密钥、Token 等凭证类字段"
+            ));
+        }
+
+        // Also check for excessively large responses (potential data leak indicator)
+        if (body.length() > 50000) {
+            String path = url != null ? com.flechazo.apisentinel.util.UrlUtils.extractPath(url) : "unknown";
+            findings.add(new HeuristicFinding(
+                    "LOW", "Excessive Data Exposure",
+                    "API 响应体过大（" + (body.length() / 1024) + " KB）",
+                    "路径 " + path + " 返回了 " + (body.length() / 1024) + " KB 的响应体，"
+                    + "可能包含过多数据。检查是否有分页或数据过滤机制。",
+                    "实现分页查询，限制单次返回数据量。使用字段过滤只返回必要字段"
+            ));
+        }
     }
 
     private static String truncate(String s, int maxLen) {

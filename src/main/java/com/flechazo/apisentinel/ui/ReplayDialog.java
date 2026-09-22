@@ -70,17 +70,27 @@ class ReplayDialog extends JDialog {
         // editor's request actually carries a host/port/protocol — creating a
         // request with no service makes sendRequest() throw
         // "HTTP service cannot be null".
+        HttpService defaultService = resolveService(entry, rawRequest != null ? rawRequest : "");
         if (rawRequest != null && !rawRequest.isEmpty()) {
-            HttpService service = resolveService(entry, rawRequest);
             try {
-                requestEditor.setRequest(HttpRequest.httpRequest(service, rawRequest));
+                requestEditor.setRequest(HttpRequest.httpRequest(defaultService, rawRequest));
             } catch (Exception ex) {
                 requestEditor.setRequest(HttpRequest.httpRequest(
                         HttpService.httpService("localhost", 443, true), rawRequest));
             }
         } else {
-            statusLabel.setText("无可用请求数据 — 请手动输入");
-            statusLabel.setForeground(theme.riskMedium());
+            // No captured request — build a template from the ApiEntry so the
+            // editor has a valid HttpService and the user can edit + send
+            // without hitting "HTTP service cannot be null".
+            String template = buildTemplateRequest(entry);
+            try {
+                requestEditor.setRequest(HttpRequest.httpRequest(defaultService, template));
+                statusLabel.setText("无原始请求 — 已从接口信息生成模板，请编辑后发送");
+                statusLabel.setForeground(theme.riskMedium());
+            } catch (Exception ex) {
+                statusLabel.setText("无可用请求数据 — 请手动输入");
+                statusLabel.setForeground(theme.riskMedium());
+            }
         }
 
         theme.apply(this);
@@ -130,6 +140,29 @@ class ReplayDialog extends JDialog {
             return HttpService.httpService(host, port, port != 80);
         }
         return HttpService.httpService("localhost", 443, true);
+    }
+
+    /**
+     * Build a minimal HTTP request template from the ApiEntry's method +
+     * path + domain, so the editor has something to work with even when
+     * no raw request was captured. The user can then edit and send it.
+     */
+    private static String buildTemplateRequest(ApiEntry entry) {
+        if (entry == null) {
+            return "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        }
+        String method = entry.getHttpMethod() != null ? entry.getHttpMethod() : "GET";
+        String path = entry.getApiPath() != null ? entry.getApiPath() : "/";
+        String host = entry.getDomain() != null ? entry.getDomain() : "localhost";
+        StringBuilder sb = new StringBuilder();
+        sb.append(method).append(' ').append(path).append(" HTTP/1.1\r\n");
+        sb.append("Host: ").append(host).append("\r\n");
+        if ("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method)) {
+            sb.append("Content-Type: application/json\r\n");
+            sb.append("Content-Length: 0\r\n");
+        }
+        sb.append("\r\n");
+        return sb.toString();
     }
 
     private void sendRequest() {

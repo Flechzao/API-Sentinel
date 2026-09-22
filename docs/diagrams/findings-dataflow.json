@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "API Sentinel 发现流转",
+    "locale": "zh-CN",
+    "viewBox": [1100, 520]
+  },
+  "stages": [
+    { "label": "流量入口" },
+    { "label": "检测 · 验证" },
+    { "label": "仲裁 · 输出" }
+  ],
+  "nodes": [
+    { "id": "traffic", "type": "frontend", "label": "HTTP 流量", "sublabel": "Burp Proxy", "stage": 0, "row": 0, "tag": "实时捕获" },
+
+    { "id": "passive", "type": "backend", "label": "被动检测", "sublabel": "规则引擎 · 敏感扫描", "stage": 1, "row": 0, "tag": "零请求" },
+    { "id": "agent", "type": "backend", "label": "AgentLoop", "sublabel": "ReAct + 工具", "stage": 1, "row": 1, "tag": "LLM 驱动" },
+    { "id": "target", "type": "external", "label": "目标 API", "sublabel": "发包验证", "stage": 1, "row": 2, "tag": "send_request" },
+
+    { "id": "evidence", "type": "database", "label": "证据存储", "sublabel": "EvidenceStore", "stage": 2, "row": 2, "tag": "证据链" },
+    { "id": "verdict", "type": "security", "label": "Verdict 仲裁", "sublabel": "CONFIRMED", "stage": 2, "row": 1, "tag": "证据秤" },
+    { "id": "repo", "type": "database", "label": "ApiRepository", "sublabel": "落库 · 导出", "stage": 2, "row": 0, "tag": "持久化" }
+  ],
+  "flows": [
+    { "from": "traffic", "to": "passive", "label": "响应分析", "variant": "emphasis", "route": "straight" },
+    { "from": "passive", "to": "agent", "label": "findings", "variant": "default", "route": "vertical-channel" },
+    { "from": "agent", "to": "target", "label": "攻击 payload", "variant": "security", "route": "vertical-channel" },
+    { "from": "target", "to": "evidence", "label": "响应", "variant": "default", "route": "straight" },
+    { "from": "evidence", "to": "verdict", "label": "validate", "variant": "emphasis", "route": "vertical-channel" },
+    { "from": "verdict", "to": "repo", "label": "persist", "variant": "emphasis", "route": "vertical-channel" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "被动检测", "items": ["零请求：基于已有流量", "38 条规则 + 用户自定义"] },
+    { "dot": "emerald", "title": "AI 验证", "items": ["Agent 驱动 ReAct 循环", "动态生成 payload 并发包验证"] },
+    { "dot": "rose", "title": "证据仲裁", "items": ["verdict 经证据秤仲裁", "CONFIRMED / REJECTED 明确判定"] }
+  ]
+}

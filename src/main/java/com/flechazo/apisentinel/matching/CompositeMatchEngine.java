@@ -38,13 +38,18 @@ public class CompositeMatchEngine implements MatchEngine {
 
     @Override
     public List<ApiEntry> match(String urlPath, String requestBody) {
+        return match(urlPath, "", requestBody);
+    }
+
+    public List<ApiEntry> match(String urlPath, String queryString, String requestBody) {
         AppConfig config = configManager.getConfig();
         MatchMode mode = config.getMatchMode().normalize();
 
         // Include body length + hashcode to avoid collisions (e.g. "Aa" vs "BB"
         // share String#hashCode but differ in length).
         String cacheKey = mode == MatchMode.FUZZY
-                ? mode.name() + ":" + urlPath + ":" + (requestBody == null ? 0 : requestBody.length())
+                ? mode.name() + ":" + urlPath + ":" + (queryString == null ? 0 : queryString.length())
+                  + ":" + (requestBody == null ? 0 : requestBody.length())
                   + ":" + Objects.hashCode(requestBody)
                 : mode.name() + ":" + urlPath;
         List<ApiEntry> cached = cache.get(cacheKey);
@@ -54,7 +59,13 @@ public class CompositeMatchEngine implements MatchEngine {
 
         List<ApiEntry> result = switch (mode) {
             case EXACT -> trieEngine.matchExact(urlPath);
-            case FUZZY -> fuzzyEngine.match(urlPath, config.isCheckWholeRequest() ? requestBody : null);
+            case FUZZY -> {
+                // Include query string in search text for RPC gateway patterns
+                // where API identity is in query params (e.g. Action=ListByocResourceGroups)
+                String searchPath = (queryString != null && !queryString.isEmpty())
+                        ? urlPath + "?" + queryString : urlPath;
+                yield fuzzyEngine.match(searchPath, config.isCheckWholeRequest() ? requestBody : null);
+            }
             default -> trieEngine.matchExact(urlPath); // legacy fallback
         };
 

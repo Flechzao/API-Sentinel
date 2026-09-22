@@ -51,7 +51,7 @@ public class FindingsDetailDialog extends JDialog {
         riskLabel.setForeground(riskColor(verdict.overallRisk()));
         infoBar.add(riskLabel);
 
-        JLabel tokensLabel = new JLabel("Tokens: " + verdict.totalTokensUsed());
+        JLabel tokensLabel = new JLabel(String.format(I18n.get("ai_tokens_label"), verdict.totalTokensUsed()));
         tokensLabel.setFont(theme.displayFont(Font.PLAIN, 11f));
         tokensLabel.setForeground(theme.mutedText());
         infoBar.add(tokensLabel);

@@ -1,0 +1,26 @@
+# Server-Side Request Forgery (SSRF) Detection
+id: custom-ssrf-detection
+name: SSRF Detection via Internal IP Access
+severity: high
+type: response-pattern
+
+description: Detects SSRF vulnerabilities when server accesses internal resources
+remediation: Validate and whitelist URLs. Block internal IP ranges (10.x, 172.16-31.x, 192.168.x). Disable unnecessary protocols.
+
+matchers:
+  - type: regex
+    pattern: "(?i)(127\\.0\\.0\\.1|localhost|169\\.254\\.169\\.254|10\\.\\d+\\.\\d+\\.\\d+|192\\.168\\.)"
+    condition: or
+    part: body
+
+  - type: word
+    words: ["internal network", "metadata", "ami-id", "instance-id"]
+    condition: or
+    part: body
+
+  - type: status
+    status: 200
+    condition: and
+    part: status
+
+tags: ssrf, owasp-a07, cloud-metadata, high

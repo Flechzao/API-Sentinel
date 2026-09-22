@@ -64,7 +64,9 @@ public class AgentController {
     private volatile long lastAnalysisTime = 0;
 
     // Configurable limits
-    private volatile int maxConcurrentAnalyses = 3;
+    // P2-2: default 4 (aligned with llmExecutor's 4-thread pool and
+    // BatchOrchestrator's 4-slot semaphore). Pre-P2-2 was 3.
+    private volatile int maxConcurrentAnalyses = 4;
     private volatile int maxAutoVerifyPerApi = 3;
 
     // Cascade hunting: per-source cap mirrors the resolver's priority order
@@ -146,7 +148,18 @@ public class AgentController {
             logger.info("[Agent] 自动模式已开启");
             eventBus.publish(new AgentStatusEvent(true, "Agent 自动模式已开启"));
         } else {
-            logger.info("[Agent] 自动模式已关闭");
+            // Defensive reset: if a previous auto-mode run left activeAnalyses
+            // non-zero (e.g. onAgentError without a matching AiAnalysisCompleteEvent,
+            // or the onAnalysisComplete auto-mode gate dropping a decrement before
+            // this fix landed), the counter would leak and every future auto
+            // analysis would silently queue until restart. Flipping the toggle
+            // off is the user's "reset the system" gesture — honor it by
+            // zeroing the counter so stuck slots can't persist across sessions.
+            int leaked = activeAnalyses.getAndSet(0);
+            if (leaked > 0) {
+                logger.warn("[Agent] 自动模式关闭时重置泄漏的并发槽 %d → 0", leaked);
+            }
+            logger.debug("[Agent] 自动模式已关闭");
             eventBus.publish(new AgentStatusEvent(false, "Agent 自动模式已关闭"));
         }
     }
@@ -397,7 +410,7 @@ public class AgentController {
             return; // defensive: suspected-only must never cascade
         }
         if (!goalState.shouldCascade()) {
-            logger.info("[Agent] 跳过级联 (%s): %s",
+            logger.debug("[Agent] 跳过级联 (%s): %s",
                     goalState.isBlocked() ? "已熔断" : "预算耗尽", source.getApiPath());
             return;
         }
@@ -417,6 +430,9 @@ public class AgentController {
 
             ApiEntry sibling = new ApiEntry(t.httpMethod(), t.concretePath());
             sibling.setDomain(source.getDomain());
+            // P1-1 fix: Mark cascade origin in the note field so reports can
+            // distinguish "own findings" from "cascade-discovered findings"
+            sibling.setNote("[级联发现] 来源: " + source.getApiPath());
             String url = buildSiblingUrl(source.getLastUrl(), t.concretePath());
             sibling.setLastUrl(url);
             // The source's captured request with its request-line rewritten —
@@ -497,11 +513,11 @@ public class AgentController {
                 ).get(120, TimeUnit.SECONDS);
 
                 if (cases.isEmpty()) {
-                    logger.info("[Agent] 未生成测试用例: %s", entry.getApiPath());
+                    logger.debug("[Agent] 未生成测试用例: %s", entry.getApiPath());
                     return;
                 }
 
-                logger.info("[Agent] 生成 %d 个测试用例: %s", cases.size(), entry.getApiPath());
+                logger.debug("[Agent] 生成 %d 个测试用例: %s", cases.size(), entry.getApiPath());
                 totalVerified.addAndGet(Math.min(cases.size(), maxAutoVerifyPerApi));
 
                 eventBus.publish(new AgentProgressEvent(
@@ -509,7 +525,11 @@ public class AgentController {
                         String.format("已生成 %d 个测试用例", cases.size())));
 
             } catch (Exception e) {
-                logger.debug("[Agent] 测试用例生成失败: %s", e.getMessage());
+                // P1-1: promote to warn — test-case generation failure
+                // means the user won't see any "生成测试用例" entries in
+                // the Repeater for this finding, which is a visible
+                // regression from their perspective.
+                logger.warn("[Agent] 测试用例生成失败: %s", e.getMessage());
             }
         });
     }
@@ -532,6 +552,9 @@ public class AgentController {
 
     public void shutdown() {
         enabled = false;
+        // Reset the slot counter so a hot reload of the extension cannot
+        // inherit a leaked activeAnalyses value from the previous load.
+        activeAnalyses.set(0);
         // Unsubscribe EventBus listeners so a re-load of the extension cannot
         // leave stale listeners producing duplicate processing.
         if (subscriptions != null) {

@@ -28,6 +28,64 @@ public final class HttpMessageUtils {
 
     private HttpMessageUtils() {}
 
+    /**
+     * P1-2 fix: Header marker for requests sent by API-Sentinel's own tools
+     * (SendRequestTool, ActiveProbeExecutor, etc.). HttpTrafficHandler checks
+     * this and skips processing to prevent probe payloads (like GET /etc/passwd)
+     * from being registered as API entries.
+     *
+     * <p>P1-4 hardening: the marker value is a random 128-bit nonce
+     * minted once per JVM session (instead of the pre-P1-4 constant
+     * {@code "probe"}). An attacker who could reflect or guess the old
+     * constant could forge the header on an external request and
+     * blind {@code HttpTrafficHandler} into treating it as "our own"
+     * probe — silently dropping a legitimate captured request and
+     * hiding it from the agent. A session-unique nonce makes forgery
+     * infeasible: the attacker has no way to learn the nonce without
+     * first reading our process memory.
+     */
+    public static final String PROBE_MARKER_HEADER = "X-Api-Sentinel";
+    private static final String PROBE_MARKER_VALUE = mintSessionNonce();
+
+    private static String mintSessionNonce() {
+        byte[] bytes = new byte[16];
+        new java.security.SecureRandom().nextBytes(bytes);
+        StringBuilder sb = new StringBuilder(32);
+        for (byte b : bytes) sb.append(String.format("%02x", b));
+        return sb.toString();
+    }
+
+    /** The value we set on outgoing probes. Exposed so callers that
+     *  need to correlate a captured request with a sent one (e.g. the
+     *  {@code search_traffic} tool) can match on the concrete value. */
+    public static String probeMarkerValue() { return PROBE_MARKER_VALUE; }
+
+    /** Check if a request was sent by API-Sentinel's probe tools.
+     *  P1-4: matches on both header name AND the session-unique value
+     *  — a request with the right name but the wrong value is treated
+     *  as an external forgery attempt and rejected. */
+    public static boolean isProbeRequest(HttpRequest request) {
+        for (HttpHeader header : request.headers()) {
+            if (PROBE_MARKER_HEADER.equalsIgnoreCase(header.name())
+                    && PROBE_MARKER_VALUE.equals(header.value())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Add probe marker header to a raw request string. */
+    public static String addProbeMarker(String rawRequest) {
+        // Insert after the first line (request line)
+        int firstNewline = rawRequest.indexOf('\n');
+        if (firstNewline < 0) {
+            return rawRequest + "\n" + PROBE_MARKER_HEADER + ": " + PROBE_MARKER_VALUE + "\n";
+        }
+        return rawRequest.substring(0, firstNewline + 1)
+                + PROBE_MARKER_HEADER + ": " + PROBE_MARKER_VALUE + "\n"
+                + rawRequest.substring(firstNewline + 1);
+    }
+
     public static String buildRawRequest(HttpRequest request) {
         try {
             return new String(request.toByteArray().getBytes());

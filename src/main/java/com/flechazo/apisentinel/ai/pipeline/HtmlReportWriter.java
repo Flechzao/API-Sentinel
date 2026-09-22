@@ -45,9 +45,29 @@ public class HtmlReportWriter {
      *         (no confirmed/suspected vulns) or saving failed.
      */
     public Path saveReport(ApiEntry entry, PipelineResult result) {
+        SaveOutcome outcome = saveReportEx(entry, result);
+        return outcome.path();
+    }
+
+    /** P0-12 #6 hardening: explicit-result form of {@link #saveReport}.
+     *  Pre-P0-12, both "no findings to report" and "disk write failed"
+     *  collapsed to {@code null}, so callers (PipelineFacade) couldn't
+     *  tell a successful no-op from a silent failure — "no HTML button"
+     *  looked identical to "we tried and failed". The new record
+     *  distinguishes the three outcomes:
+     *  <ul>
+     *    <li><b>SAVED</b>: wrote successfully, path is non-null.</li>
+     *    <li><b>NO_CONTENT</b>: verdict had nothing worth reporting —
+     *        designed no-op, not a failure.</li>
+     *    <li><b>FAILED</b>: write failed; errorMessage has details.</li>
+     *  </ul>
+     *  PipelineFacade should show "查看报告" only for SAVED, log an
+     *  explicit "report save failed" note for FAILED, and the existing
+     *  "no findings" note for NO_CONTENT. */
+    public SaveOutcome saveReportEx(ApiEntry entry, PipelineResult result) {
         FinalVerdict verdict = result.verdict();
         if (verdict == null || (verdict.confirmedVulns().isEmpty() && verdict.suspectedVulns().isEmpty())) {
-            return null;
+            return SaveOutcome.noContent();
         }
         try {
             Files.createDirectories(reportsDir);
@@ -63,11 +83,22 @@ public class HtmlReportWriter {
             logger.info("[HTML报告] 已保存: %s (%d bytes)", file.getFileName(), html.length());
 
             cleanupOldReports();
-            return file;
+            return SaveOutcome.saved(file);
         } catch (IOException e) {
             logger.error("[HTML报告] 保存失败: %s", e.getMessage());
-            return null;
+            return SaveOutcome.failed(e.getMessage() == null
+                    ? e.getClass().getSimpleName() : e.getMessage());
         }
+    }
+
+    /** Result of {@link #saveReportEx}. Use {@link #kind()} to switch on
+     *  the outcome; {@link #path()} is non-null only for SAVED,
+     *  {@link #errorMessage()} only for FAILED. */
+    public record SaveOutcome(Kind kind, Path path, String errorMessage) {
+        public enum Kind { SAVED, NO_CONTENT, FAILED }
+        static SaveOutcome saved(Path p) { return new SaveOutcome(Kind.SAVED, p, null); }
+        static SaveOutcome noContent() { return new SaveOutcome(Kind.NO_CONTENT, null, null); }
+        static SaveOutcome failed(String reason) { return new SaveOutcome(Kind.FAILED, null, reason); }
     }
 
     public Path getReportsDir() { return reportsDir; }
@@ -95,7 +126,7 @@ public class HtmlReportWriter {
                 logger.info("[HTML报告] 自动清理了 %d 个旧报告，保留最新 %d 个", toDelete, MAX_REPORTS);
             }
         } catch (IOException e) {
-            logger.debug("[HTML报告] 清理旧报告失败: %s", e.getMessage());
+            logger.warn("[HTML报告] 清理旧报告失败: %s", e.getMessage());
         }
     }
 

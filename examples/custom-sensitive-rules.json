@@ -1,0 +1,49 @@
+[
+  {
+    "_comment": "自定义敏感信息规则示例",
+    "_usage": "复制这些规则到 ~/.api-sentinel/sensitive-rules.json，或在 UI 设置面板中添加",
+    "_format": "HaE 风格三层格式：主正则 + 排除过滤 + 作用域"
+  },
+  {
+    "name": "公司内部 API Key",
+    "regex": "(api[_-]?key|apikey)\\s*[:=]\\s*['\"]([a-zA-Z0-9]{32,})['\"]",
+    "exclude": "example|test|demo",
+    "scope": "response"
+  },
+  {
+    "name": "内部服务 Token",
+    "regex": "(service[_-]?token|internal[_-]?token)\\s*[:=]\\s*['\"]([a-zA-Z0-9_\\-]{40,})['\"]",
+    "exclude": "",
+    "scope": "any"
+  },
+  {
+    "name": "数据库连接密码",
+    "regex": "(password|passwd|pwd)\\s*[:=]\\s*['\"]([^'\"]{8,})['\"]",
+    "exclude": "password.*example|changeme|your[_-]?password",
+    "scope": "response"
+  },
+  {
+    "name": "微信企业号 Secret",
+    "regex": "corpSecret['\"]?\\s*[:=]\\s*['\"]([a-zA-Z0-9_\\-]{40,})['\"]",
+    "exclude": "",
+    "scope": "response"
+  },
+  {
+    "name": "钉钉应用 Secret",
+    "regex": "dingtalk[_-]?secret['\"]?\\s*[:=]\\s*['\"]([a-zA-Z0-9_\\-]{32,})['\"]",
+    "exclude": "",
+    "scope": "response"
+  },
+  {
+    "name": "Redis 密码",
+    "regex": "redis[_-]?(password|pass|pwd)['\"]?\\s*[:=]\\s*['\"]([^'\"]+)['\"]",
+    "exclude": "",
+    "scope": "response"
+  },
+  {
+    "name": "Elasticsearch 认证",
+    "regex": "elasticsearch[_-]?(password|token|key)['\"]?\\s*[:=]\\s*['\"]([^'\"]+)['\"]",
+    "exclude": "",
+    "scope": "response"
+  }
+]

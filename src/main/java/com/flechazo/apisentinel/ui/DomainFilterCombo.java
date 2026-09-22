@@ -15,7 +15,7 @@ import java.util.function.Consumer;
  */
 public class DomainFilterCombo extends JPanel {
 
-    private static final String ALL_DOMAINS = "所有域名";
+    private static final String ALL_DOMAINS_KEY = "all_domains";
 
     private final JComboBox<String> comboBox;
     private final ApiRepository repository;
@@ -33,7 +33,7 @@ public class DomainFilterCombo extends JPanel {
         setLayout(new FlowLayout(FlowLayout.LEFT, 4, 0));
         setOpaque(false);
 
-        JLabel label = new JLabel("域名:");
+        JLabel label = new JLabel(I18n.get("domain_label"));
         label.setFont(theme.displayFont(Font.BOLD, 12f));
         label.setForeground(new Color(80, 80, 80));
         add(label);
@@ -76,7 +76,7 @@ public class DomainFilterCombo extends JPanel {
         comboBox.removeAllItems();
 
         // "All domains" option
-        String allDisplay = ALL_DOMAINS + " (" + all.size() + ")";
+        String allDisplay = I18n.get(ALL_DOMAINS_KEY) + " (" + all.size() + ")";
         displayToDomain.put(allDisplay, null);
         comboBox.addItem(allDisplay);
 

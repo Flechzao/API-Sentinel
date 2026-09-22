@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Sentinel · Agent 主循环内部机制</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'JetBrains Mono', monospace; background: #020617; min-height: 100vh; padding: 2rem; color: white; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container { background: rgba(15, 23, 42, 0.5); border-radius: 1rem; border: 1px solid #1e293b; padding: 1.5rem; overflow-x: auto; }
+    svg { width: 100%; min-width: 900px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; } .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; } .card-dot.amber { background: #fbbf24; } .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle { background: transparent; border: none; color: #475569; cursor: pointer; font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem; transition: color 0.2s, background 0.2s; }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button { background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8; padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+    @media print { body { background: #020617; padding: 1rem; } .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>API Sentinel · Agent 主循环内部机制</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">启动装配 → ReAct 每轮四步（感知→思考→工具→观察） → 循环护栏 → 三类终止　·　AgentLoop.java</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 660">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrowloop" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ① 启动装配 (cyan) -->
+        <rect x="40" y="36" width="920" height="86" rx="10" fill="rgba(15,23,42,0.35)" stroke="#1e293b" stroke-width="1"/>
+        <text x="56" y="60" fill="#22d3ee" font-size="11" font-weight="600">① 启动装配（首轮前一次性）</text>
+        <rect x="90" y="70" width="250" height="40" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="215" y="94" fill="white" font-size="11" text-anchor="middle">构建 System Prompt</text>
+        <rect x="375" y="70" width="250" height="40" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="500" y="94" fill="white" font-size="11" text-anchor="middle">注册工具集（31 个工具）</text>
+        <rect x="660" y="70" width="250" height="40" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="785" y="94" fill="white" font-size="11" text-anchor="middle">装配上下文（流量/代码/会话）</text>
+        <line x1="500" y1="122" x2="500" y2="150" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ② ReAct 迭代循环 (emerald) -->
+        <rect x="40" y="150" width="920" height="172" rx="10" fill="rgba(15,23,42,0.35)" stroke="#34d399" stroke-width="1"/>
+        <text x="56" y="174" fill="#34d399" font-size="11" font-weight="600">② ReAct 迭代循环　·　for (i = 0; i &lt; 50; i++)</text>
+
+        <rect x="70" y="196" width="190" height="60" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="165" y="220" fill="white" font-size="12" font-weight="600" text-anchor="middle">① 感知 / 压缩</text>
+        <text x="165" y="238" fill="#94a3b8" font-size="9" text-anchor="middle">裁剪历史 · 保留最近</text>
+        <text x="165" y="250" fill="#94a3b8" font-size="9" text-anchor="middle">结果 30k tokens</text>
+
+        <rect x="293" y="196" width="190" height="60" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="388" y="220" fill="white" font-size="12" font-weight="600" text-anchor="middle">② 思考 · LLM</text>
+        <text x="388" y="238" fill="#94a3b8" font-size="9" text-anchor="middle">扩展思考预算</text>
+        <text x="388" y="250" fill="#94a3b8" font-size="9" text-anchor="middle">6000 / 1500 tokens</text>
+
+        <rect x="516" y="196" width="190" height="60" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="611" y="220" fill="white" font-size="12" font-weight="600" text-anchor="middle">③ 工具调用</text>
+        <text x="611" y="238" fill="#94a3b8" font-size="9" text-anchor="middle">真实发送请求</text>
+        <text x="611" y="250" fill="#94a3b8" font-size="9" text-anchor="middle">取证 · 无回显走 OOB</text>
+
+        <rect x="739" y="196" width="190" height="60" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="834" y="220" fill="white" font-size="12" font-weight="600" text-anchor="middle">④ 观察 / 回填</text>
+        <text x="834" y="238" fill="#94a3b8" font-size="9" text-anchor="middle">结果注入上下文</text>
+        <text x="834" y="250" fill="#94a3b8" font-size="9" text-anchor="middle">检测异常 / WAF</text>
+
+        <line x1="260" y1="226" x2="291" y2="226" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="483" y1="226" x2="514" y2="226" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="706" y1="226" x2="737" y2="226" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- return loop arrow -->
+        <path d="M 834 256 C 834 298, 165 298, 165 258" fill="none" stroke="#34d399" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowloop)"/>
+        <text x="500" y="292" fill="#34d399" font-size="10" text-anchor="middle">↻ i++ · 观察回填后进入下一轮（每轮上限 16384 tokens）</text>
+
+        <line x1="500" y1="322" x2="500" y2="350" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ③ 循环护栏 (amber) -->
+        <rect x="40" y="350" width="920" height="130" rx="10" fill="rgba(15,23,42,0.35)" stroke="#1e293b" stroke-width="1"/>
+        <text x="56" y="374" fill="#fbbf24" font-size="11" font-weight="600">③ 循环护栏（成本控制 &amp; 收敛）</text>
+        <rect x="70" y="386" width="200" height="76" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="170" y="412" fill="white" font-size="11" font-weight="600" text-anchor="middle">迭代上限 50</text>
+        <text x="170" y="430" fill="#94a3b8" font-size="9" text-anchor="middle">MAX_ITERATIONS</text>
+        <text x="170" y="444" fill="#94a3b8" font-size="9" text-anchor="middle">安全断路器</text>
+        <rect x="290" y="386" width="200" height="76" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="390" y="412" fill="white" font-size="11" font-weight="600" text-anchor="middle">每轮 ≤ 16384</text>
+        <text x="390" y="430" fill="#94a3b8" font-size="9" text-anchor="middle">MAX_TOKENS</text>
+        <text x="390" y="444" fill="#94a3b8" font-size="9" text-anchor="middle">_PER_TURN</text>
+        <rect x="510" y="386" width="200" height="76" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="610" y="412" fill="white" font-size="11" font-weight="600" text-anchor="middle">结果预算 30k</text>
+        <text x="610" y="430" fill="#94a3b8" font-size="9" text-anchor="middle">RECENT_TOOL_</text>
+        <text x="610" y="444" fill="#94a3b8" font-size="9" text-anchor="middle">RESULTS 滚动保留</text>
+        <rect x="730" y="386" width="200" height="76" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="830" y="412" fill="white" font-size="11" font-weight="600" text-anchor="middle">反思触发</text>
+        <text x="830" y="430" fill="#94a3b8" font-size="9" text-anchor="middle">连续 3 轮无异常</text>
+        <text x="830" y="444" fill="#94a3b8" font-size="9" text-anchor="middle">或 3 次 WAF 拦截</text>
+        <line x1="500" y1="480" x2="500" y2="508" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ④ 三类终止 (rose) -->
+        <rect x="40" y="508" width="920" height="120" rx="10" fill="rgba(15,23,42,0.35)" stroke="#fb7185" stroke-width="1"/>
+        <text x="56" y="532" fill="#fb7185" font-size="11" font-weight="600">④ 三类终止条件</text>
+        <rect x="70" y="544" width="270" height="66" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="205" y="570" fill="white" font-size="11" font-weight="600" text-anchor="middle">submit_report 通过门禁</text>
+        <text x="205" y="588" fill="#94a3b8" font-size="9" text-anchor="middle">单端点即结束 /</text>
+        <text x="205" y="600" fill="#94a3b8" font-size="9" text-anchor="middle">多端点全部提交后结束</text>
+        <rect x="365" y="544" width="270" height="66" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="500" y="570" fill="white" font-size="11" font-weight="600" text-anchor="middle">用户 cancel() 协作中断</text>
+        <text x="500" y="588" fill="#94a3b8" font-size="9" text-anchor="middle">轮次/工具批次间检查</text>
+        <text x="500" y="600" fill="#94a3b8" font-size="9" text-anchor="middle">已收集证据兜底成文</text>
+        <rect x="660" y="544" width="270" height="66" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="795" y="570" fill="white" font-size="11" font-weight="600" text-anchor="middle">达 50 轮 → fallback</text>
+        <text x="795" y="588" fill="#94a3b8" font-size="9" text-anchor="middle">buildFallbackResult</text>
+        <text x="795" y="600" fill="#94a3b8" font-size="9" text-anchor="middle">强制成文（异常同样兜底）</text>
+      </svg>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-header"><div class="card-dot emerald"></div><h3>ReAct 四步回环</h3></div>
+        <ul>
+          <li>• 感知：压缩历史，最近工具结果保留 30k tokens</li>
+          <li>• 思考：LLM 扩展思考，首轮/反思 6000、常规 1500</li>
+          <li>• 工具：真实发请求取证，无回显走 OOB 带外</li>
+          <li>• 观察：结果回填，检测异常 / WAF 后进入下一轮</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-dot amber"></div><h3>成本 &amp; 收敛护栏</h3></div>
+        <ul>
+          <li>• MAX_ITERATIONS = 50（安全断路器）</li>
+          <li>• 每轮 MAX_TOKENS_PER_TURN = 16384</li>
+          <li>• 最近结果预算 30k tokens，滚动保留</li>
+          <li>• 反思注入：连续 3 轮无异常 / 3 次 WAF 拦截</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-dot rose"></div><h3>终止 &amp; 兜底</h3></div>
+        <ul>
+          <li>• submit_report 通过门禁 → 正常结束</li>
+          <li>• cancel() 协作中断 → 证据兜底成文</li>
+          <li>• 达 50 轮 / 异常 → buildFallbackResult</li>
+          <li>• 任一路径都产出结构化结论，不空手而归</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">API Sentinel · Agent 主循环内部机制 · 源自 AgentLoop.java（Montoya API 扩展）</p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) { btn.textContent = '✗ Failed'; }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+    async function downloadPNG(btn) {
+      const orig = btn.textContent; btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a'); link.download = 'agent-loop-internals.png'; link.href = canvas.toDataURL('image/png'); link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) { btn.textContent = '✗ Failed'; }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+    async function downloadPDF(btn) {
+      const orig = btn.textContent; btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height); pdf.save('agent-loop-internals.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) { btn.textContent = '✗ Failed'; }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>

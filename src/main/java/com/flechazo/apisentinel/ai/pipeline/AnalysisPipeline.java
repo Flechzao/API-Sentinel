@@ -15,6 +15,7 @@ import burp.api.montoya.http.execution.Retention;
 import com.flechazo.apisentinel.ai.analysis.AnalysisResult;
 import com.flechazo.apisentinel.ai.analysis.VulnerabilityAnalyzer;
 import com.flechazo.apisentinel.ai.prompt.FinalVerdictPrompt;
+import com.flechazo.apisentinel.ai.prompt.UntrustedContent;
 import com.flechazo.apisentinel.ai.provider.LlmProvider;
 import com.flechazo.apisentinel.ai.provider.LlmRequest;
 import com.flechazo.apisentinel.ai.provider.LlmResponse;
@@ -82,6 +83,13 @@ public class AnalysisPipeline {
     private volatile String fastModel;
     public void setFastModel(String model) { this.fastModel = model; }
 
+    /** P1-6: propagated to {@link VulnerabilityAnalyzer} on each Stage-1
+     *  run. False (default) = redact credentials before the LLM sees
+     *  the HTTP traffic; true = pass raw credentials through (only
+     *  sensible for local LLM providers the user fully trusts). */
+    private volatile boolean includeRawCredentials = false;
+    public void setIncludeRawCredentials(boolean include) { this.includeRawCredentials = include; }
+
     /** Cross-run reuse window: if the same endpoint was analyzed within this many
      *  minutes, its previous verdict is injected as "known conclusions" context. */
     private volatile int reuseWindowMinutes = 30;
@@ -90,7 +98,7 @@ public class AnalysisPipeline {
     private final CodeIndexService codeIndexService;
     private final LeveledLogger logger;
     private final ExecutorService executor;
-    private final PipelineConfig config;
+    private final AnalysisConfig config;
     private final List<com.flechazo.apisentinel.config.CodeRepo> codeRepos;
     private final WafDetector wafDetector;
 
@@ -101,12 +109,8 @@ public class AnalysisPipeline {
     /**
      * Authentication headers to carry forward from original requests.
      */
-    private static final Set<String> AUTH_HEADER_NAMES = Set.of(
-            "cookie", "authorization", "x-token", "x-access-token",
-            "x-csrf-token", "x-xsrf-token", "x-api-key", "x-auth-token",
-            "x-session-id", "x-request-id", "token", "session",
-            "x-forwarded-for", "x-real-ip"
-    );
+    // P3-10: unified to single source of truth
+    private static final Set<String> AUTH_HEADER_NAMES = com.flechazo.apisentinel.util.AuthHeaders.AUTH_HEADERS;
 
     /**
      * Callback interface for pipeline progress updates.
@@ -168,7 +172,7 @@ public class AnalysisPipeline {
     public AnalysisPipeline(LlmProvider provider,
                             MontoyaApi montoyaApi,
                             CodeIndexService codeIndexService,
-                            PipelineConfig config,
+                            AnalysisConfig config,
                             List<com.flechazo.apisentinel.config.CodeRepo> codeRepos,
                             LeveledLogger logger) {
         this.provider = provider;
@@ -194,24 +198,34 @@ public class AnalysisPipeline {
             try {
             Map<Integer, String> stageDescriptions = new java.util.LinkedHashMap<>();
             try {
-                // ===== Pre-step A: Code lookup (local, no AI call) =====
+                // ===== Pre-step A + B: Code lookup + History scan =====
                 // Code lookup is done early because it's needed by Stage 3 (payload gen) and
                 // Stage 6 (final verdict). Stage 1 does NOT use source code — it is pure traffic
                 // analysis. Stage 2 reports the code correlation details.
+                //
+                // P2-4: run Pre-step A (code lookup) and Pre-step B (history scan)
+                // in PARALLEL via CompletableFuture, since neither depends on the
+                // other. Pre-P2-4 they ran serially, adding ~1-3s of latency for
+                // code lookup that Stage 1 didn't need.
                 String sourceCode = "";
                 String codeLookupDescription = "";
+                boolean needsBackfill = !entry.hasTrafficData();
+
+                java.util.concurrent.CompletableFuture<HistoryScanResult> historyScanFuture =
+                        java.util.concurrent.CompletableFuture.supplyAsync(() -> scanHistoryOnce(entry, needsBackfill));
+                java.util.concurrent.CompletableFuture<CodeLookupResult> codeLookupFuture = null;
                 if (config.useCodeRepo() && codeIndexService != null) {
-                    CodeLookupResult codeLookup = lookupCodeDetailed(entry);
+                    codeLookupFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> lookupCodeDetailed(entry));
+                }
+
+                HistoryScanResult historyScan = historyScanFuture.get(30, TimeUnit.SECONDS);
+                TrafficStats trafficStats = historyScan.trafficStats();
+
+                if (codeLookupFuture != null) {
+                    CodeLookupResult codeLookup = codeLookupFuture.get(30, TimeUnit.SECONDS);
                     sourceCode = codeLookup.sourceCode();
                     codeLookupDescription = codeLookup.description();
                 }
-
-                // ===== Pre-step B: Single-pass Proxy History scan =====
-                // Scans ALL matching requests in one pass: collects aggregated stats AND
-                // optionally backfills traffic data (if entry has none).
-                boolean needsBackfill = !entry.hasTrafficData();
-                HistoryScanResult historyScan = scanHistoryOnce(entry, needsBackfill);
-                TrafficStats trafficStats = historyScan.trafficStats();
 
                 // ===== Stage 1: Traffic Analysis (pure HTTP traffic, NO source code) =====
                 checkCancelled();
@@ -340,18 +354,32 @@ public class AnalysisPipeline {
                 if (config.activeProbeEnabled()) {
                     callback.onStageStart(5, "主动探针（CORS/JWT伪造/CRLF/NoSQL）...");
                     List<PayloadResult> probeResults = List.of();
+                    Exception probeCrash = null;
                     try {
                         probeResults = new ActiveProbeExecutor(montoyaApi, logger,
                                 config.wafDetectionEnabled()).execute(entry);
                     } catch (Exception e) {
+                        probeCrash = e;
                         logger.warn("[Pipeline] 主动探针执行失败: %s", e.getMessage());
                     }
                     if (!probeResults.isEmpty()) {
                         payloadResults.addAll(probeResults);
                     }
-                    long probeHits = probeResults.stream().filter(PayloadResult::anomalyDetected).count();
-                    String probeSummary = String.format("主动探针: %d 个响应, %d 个程序化确认",
-                            probeResults.size(), probeHits);
+                    // P0-12 #5: surface the crash explicitly in the stage
+                    // summary. Pre-P0-12 the catch block let the stage
+                    // report "0 响应, 0 程序化确认" — indistinguishable
+                    // from "ran cleanly and found nothing" — so the final
+                    // verdict silently treated a skipped stage the same
+                    // as a clean one.
+                    String probeSummary;
+                    if (probeCrash != null) {
+                        probeSummary = "主动探针: 未执行 (" + (probeCrash.getMessage() == null
+                                ? probeCrash.getClass().getSimpleName() : probeCrash.getMessage()) + ")";
+                    } else {
+                        long probeHits = probeResults.stream().filter(PayloadResult::anomalyDetected).count();
+                        probeSummary = String.format("主动探针: %d 个响应, %d 个程序化确认",
+                                probeResults.size(), probeHits);
+                    }
                     stageDescriptions.put(5, (stageDescriptions.getOrDefault(5, "") + " | " + probeSummary)
                             .replaceFirst("^\\s*\\|\\s*", ""));
                     callback.onStageComplete(5, probeSummary);
@@ -368,17 +396,25 @@ public class AnalysisPipeline {
                                 f -> f.type() != null && f.type().toLowerCase().contains("sql"))) {
                     callback.onStageStart(5, "盲注验证（布尔/时序）...");
                     List<PayloadResult> blindResults = new ArrayList<>();
+                    Exception blindCrash = null;
                     try {
                         blindResults = executeBlindVerification(entry);
                     } catch (Exception e) {
+                        blindCrash = e;
                         logger.warn("[Pipeline] 盲注验证失败: %s", e.getMessage());
                     }
                     if (!blindResults.isEmpty()) {
                         payloadResults.addAll(blindResults);
                     }
-                    long blindHits = blindResults.stream().filter(PayloadResult::anomalyDetected).count();
-                    String blindSummary = String.format("盲注验证: %d 个探针, %d 个程序化确认",
-                            blindResults.size(), blindHits);
+                    String blindSummary;
+                    if (blindCrash != null) {
+                        blindSummary = "盲注验证: 未执行 (" + (blindCrash.getMessage() == null
+                                ? blindCrash.getClass().getSimpleName() : blindCrash.getMessage()) + ")";
+                    } else {
+                        long blindHits = blindResults.stream().filter(PayloadResult::anomalyDetected).count();
+                        blindSummary = String.format("盲注验证: %d 个探针, %d 个程序化确认",
+                                blindResults.size(), blindHits);
+                    }
                     stageDescriptions.put(5, stageDescriptions.getOrDefault(5, "") + " | " + blindSummary);
                     callback.onStageComplete(5, blindSummary);
                 }
@@ -391,17 +427,25 @@ public class AnalysisPipeline {
                 if (config.businessLogicVerificationEnabled()) {
                     callback.onStageStart(5, "业务逻辑验证（篡改/重放/负数/跳步）...");
                     List<PayloadResult> bizResults = new ArrayList<>();
+                    Exception bizCrash = null;
                     try {
                         bizResults = executeBusinessLogicVerification(entry);
                     } catch (Exception e) {
+                        bizCrash = e;
                         logger.warn("[Pipeline] 业务逻辑验证失败: %s", e.getMessage());
                     }
                     if (!bizResults.isEmpty()) {
                         payloadResults.addAll(bizResults);
                     }
-                    long bizHits = bizResults.stream().filter(PayloadResult::anomalyDetected).count();
-                    String bizSummary = String.format("业务逻辑验证: %d 项, %d 个程序化确认",
-                            bizResults.size(), bizHits);
+                    String bizSummary;
+                    if (bizCrash != null) {
+                        bizSummary = "业务逻辑验证: 未执行 (" + (bizCrash.getMessage() == null
+                                ? bizCrash.getClass().getSimpleName() : bizCrash.getMessage()) + ")";
+                    } else {
+                        long bizHits = bizResults.stream().filter(PayloadResult::anomalyDetected).count();
+                        bizSummary = String.format("业务逻辑验证: %d 项, %d 个程序化确认",
+                                bizResults.size(), bizHits);
+                    }
                     stageDescriptions.put(5, stageDescriptions.getOrDefault(5, "") + " | " + bizSummary);
                     callback.onStageComplete(5, bizSummary);
                 }
@@ -604,7 +648,10 @@ public class AnalysisPipeline {
             }
             return new HistoryScanResult(false, total, matchedCount, "", stats);
         } catch (Exception e) {
-            logger.debug("[Pipeline] 检索 Proxy History 失败: %s", e.getMessage());
+            // P1-1: promote to warn — Proxy History retrieval failure is
+            // not routine noise; it means the pipeline silently fell
+            // back to an empty context and the operator should know.
+            logger.warn("[Pipeline] 检索 Proxy History 失败: %s", e.getMessage());
             return HistoryScanResult.empty(0);
         }
     }
@@ -625,6 +672,10 @@ public class AnalysisPipeline {
             if (fastModel != null && !fastModel.isBlank()) {
                 analyzer.setModelOverride(fastModel);
             }
+            // P1-6: propagate the raw-credentials opt-in so Stage-1 redacts
+            // (default) or passes through (opt-in) consistently with the
+            // rest of the pipeline.
+            analyzer.setIncludeRawCredentials(includeRawCredentials);
 
             String method = entry.getHttpMethod();
             String url = entry.getLastUrl().isEmpty() ? entry.getApiPath() : entry.getLastUrl();
@@ -661,18 +712,47 @@ public class AnalysisPipeline {
             // Cross-run reuse: if this endpoint was analyzed recently, fold the
             // previous verdict in as "known conclusions" so the model confirms /
             // refines instead of re-deriving everything from scratch (saves tokens).
+            // P2-6: if the prior verdict was SAFE and the raw request/response
+            // hasn't changed, skip the Stage 1 LLM call entirely and reuse the
+            // prior analysis result. This saves ~$0.05/endpoint for safe
+            // endpoints — in a 42-endpoint batch where 30 are SAFE, that's
+            // ~$1.50 saved.
             String priorAnalysis = buildPriorAnalysisContext(entry);
-            if (!priorAnalysis.isEmpty()) {
-                if (trafficContextBuilder.length() > 0) trafficContextBuilder.append("\n\n");
-                trafficContextBuilder.append(priorAnalysis);
-            }
-            String trafficContext = trafficContextBuilder.toString();
+            AnalysisResult result;
+            AnalysisResult reused = tryReusePriorAnalysis(entry);
+            if (reused != null) {
+                // Prior SAFE verdict + unchanged traffic → skip Stage 1 LLM call.
+                result = reused;
+                logger.debug("[Pipeline] Stage 1 skipped (prior SAFE verdict reused, %d min old)",
+                        reuseWindowMinutes);
+            } else {
+                if (!priorAnalysis.isEmpty()) {
+                    if (trafficContextBuilder.length() > 0) trafficContextBuilder.append("\n\n");
+                    trafficContextBuilder.append(priorAnalysis);
+                }
+                String trafficContext = trafficContextBuilder.toString();
 
-            // Stage 1 receives sourceCode="" from caller — pure traffic analysis, no code context
-            AnalysisResult result = analyzer.analyze(
-                    method, url, host, requestBody, statusCode,
-                    responseBody, entry.getApiPath(), params, sourceCode, trafficContext
-            ).get(STAGE1_TIMEOUT_SEC, TimeUnit.SECONDS);
+                // Stage 1 receives sourceCode="" from caller — pure traffic analysis, no code context
+                result = analyzer.analyze(
+                        method, url, host, requestBody, statusCode,
+                        responseBody, entry.getApiPath(), params, sourceCode, trafficContext
+                ).get(STAGE1_TIMEOUT_SEC, TimeUnit.SECONDS);
+
+                // Multi-model fallback: if the fast model failed (401, timeout,
+                // or any error), retry Stage 1 with the main model. This handles
+                // cases where the proxy/API doesn't support the fast model name.
+                if (!result.isSuccess() && fastModel != null && !fastModel.isBlank()) {
+                    logger.warn("[Pipeline] Stage 1 fastModel '%s' failed (%s), falling back to main model",
+                            fastModel, result.error() != null ? result.error() : "unknown error");
+                    VulnerabilityAnalyzer fallbackAnalyzer = new VulnerabilityAnalyzer(provider, logger);
+                    fallbackAnalyzer.setIncludeRawCredentials(includeRawCredentials);
+                    // No setModelOverride — uses the main configured model
+                    result = fallbackAnalyzer.analyze(
+                            method, url, host, requestBody, statusCode,
+                            responseBody, entry.getApiPath(), params, sourceCode, trafficContext
+                    ).get(STAGE1_TIMEOUT_SEC, TimeUnit.SECONDS);
+                }
+            }
 
             // Push raw AI thinking output: the summary IS the AI's reasoning
             if (callback != null && result.isSuccess()) {
@@ -709,7 +789,7 @@ public class AnalysisPipeline {
                 callback.onAiThinkingOutput(1, "流量分析", thinkingText.toString());
             }
 
-            logger.info("[Pipeline] 阶段1完成: %s [%s] %d findings",
+            logger.debug("[Pipeline] 阶段1完成: %s [%s] %d findings",
                     entry.getApiPath(), result.overallRisk(), result.findings().size());
             return result;
 
@@ -800,7 +880,10 @@ public class AnalysisPipeline {
             }
             return new CodeLookupResult(sourceCode.toString(), desc.toString());
         } catch (Exception e) {
-            logger.debug("[Pipeline] 查找源码失败: %s", describeException(e));
+            // P1-1: promote to warn — source code lookup failure means
+            // the code-analysis stage was silently skipped, which
+            // downstream verdicts can't recover from.
+            logger.warn("[Pipeline] 查找源码失败: %s", describeException(e));
             return new CodeLookupResult("", "查找源码时出错: " + describeException(e));
         }
     }
@@ -937,7 +1020,7 @@ public class AnalysisPipeline {
                     entry.getDomain(), params, truncatedSource, stage1Findings
             ).get(STAGE3_TIMEOUT_SEC, TimeUnit.SECONDS);
 
-            logger.info("[Pipeline] 阶段3完成: 生成 %d 个测试用例", result.cases().size());
+            logger.debug("[Pipeline] 阶段3完成: 生成 %d 个测试用例", result.cases().size());
 
             StringBuilder desc = new StringBuilder();
             if (result.reasoning() != null && !result.reasoning().isEmpty()) {
@@ -1007,7 +1090,7 @@ public class AnalysisPipeline {
 
         Map<String, String> originalAuthHeaders = extractAuthHeaders(entry.getLastRawRequest());
         if (!originalAuthHeaders.isEmpty()) {
-            logger.info("[Pipeline] 从原始请求中提取到 %d 个认证/上下文头部: %s",
+            logger.debug("[Pipeline] 从原始请求中提取到 %d 个认证/上下文头部: %s",
                     originalAuthHeaders.size(), originalAuthHeaders.keySet());
         }
 
@@ -1074,7 +1157,7 @@ public class AnalysisPipeline {
                 addedHeaders.add(ah.getKey().toLowerCase());
             }
         } else {
-            logger.info("[Pipeline] 认证绕过测试 \"%s\"，跳过注入认证头", tc.name());
+            logger.debug("[Pipeline] 认证绕过测试 \"%s\"，跳过注入认证头", tc.name());
         }
 
         if (tc.headers() != null) {
@@ -1182,7 +1265,7 @@ public class AnalysisPipeline {
                             anomaly, start, -1, waf.vendor(), waf.score());
                     all.add(vpr);
                     sent++;
-                    logger.info("[Pipeline] WAF变体重试 %d/%d: %s [%s] -> %d (waf=%d) %s",
+                    logger.debug("[Pipeline] WAF变体重试 %d/%d: %s [%s] -> %d (waf=%d) %s",
                             sent, maxVariantRequests, tc.name(), v.technique(), status, waf.score(),
                             anomaly ? "[异常]" : "[正常]");
 
@@ -1377,7 +1460,7 @@ public class AnalysisPipeline {
             engine.queue(requests.get(i), label);
         }
 
-        logger.info("[Pipeline] RequestExecutionEngine 已入队 %d 个请求，并发限制=5", total);
+        logger.debug("[Pipeline] RequestExecutionEngine 已入队 %d 个请求，并发限制=5", total);
 
         RequestExecution execution = engine.sendAll((result, exec) -> {
             int idx;
@@ -1411,7 +1494,7 @@ public class AnalysisPipeline {
 
             callback.onPayloadExecuted(results.size(), total, tc.payload(), respStatusCode);
             callback.onPayloadResult(idx, pr);
-            logger.info("[Pipeline] Payload %d/%d: %s -> %d (%dms) %s%s",
+            logger.debug("[Pipeline] Payload %d/%d: %s -> %d (%dms) %s%s",
                     results.size(), total, tc.name(), respStatusCode, elapsed,
                     anomaly ? "[异常]" : "[正常]",
                     waf.isSuspected() ? "[WAF:" + (waf.vendor() != null ? waf.vendor() : "?") + "]" : "");
@@ -1420,7 +1503,7 @@ public class AnalysisPipeline {
         }, Duration.ofSeconds(30));
 
         execution.lifetime().awaitCompletion();
-        logger.info("[Pipeline] RequestExecutionEngine 完成，共 %d 个结果", results.size());
+        logger.debug("[Pipeline] RequestExecutionEngine 完成，共 %d 个结果", results.size());
         return new ArrayList<>(results);
     }
 
@@ -1451,7 +1534,7 @@ public class AnalysisPipeline {
 
                 callback.onPayloadExecuted(i + 1, total, cases.get(i).payload(), respStatusCode);
                 callback.onPayloadResult(i, pr);
-                logger.info("[Pipeline] Payload %d/%d: %s -> %d (%dms) %s%s",
+                logger.debug("[Pipeline] Payload %d/%d: %s -> %d (%dms) %s%s",
                         i + 1, total, cases.get(i).name(), respStatusCode, elapsed,
                         anomaly ? "[异常]" : "[正常]",
                         waf.isSuspected() ? "[WAF:" + (waf.vendor() != null ? waf.vendor() : "?") + "]" : "");
@@ -1626,34 +1709,30 @@ public class AnalysisPipeline {
             SessionInfo sessionA;
             SessionInfo sessionB;
 
+            // Check manual sessions first — supports 2 or 3 sessions with pairwise comparison
+            if (config.hasManualSessions()) {
+                logger.info("[Pipeline] 使用手动配置的 %d 个会话进行越权检测（两两配对）",
+                        config.countConfiguredSessions());
+                callback.onStageStart(5, String.format("使用 %d 个手动会话进行越权检测...",
+                        config.countConfiguredSessions()));
+
+                AuthTestExecutor executor = new AuthTestExecutor(montoyaApi, provider,
+                        config.aiAuthArbitrationEnabled());
+                String targetDomain = entry.getDomain() != null ? entry.getDomain() : "";
+                return executor.executePairwise(config.manualSessionConfigs(), targetDomain);
+            }
+
+            // Auto-discovery fallback
             if (sessions.size() >= 2) {
-                // Auto-discovery succeeded
                 sessions.sort((a, b) -> Integer.compare(b.getRequests().size(), a.getRequests().size()));
                 sessionA = sessions.get(0);
                 sessionB = sessions.get(1);
                 logger.info("[Pipeline] 鉴权测试: 自动发现 %d 个会话, 使用 %s 和 %s",
                         sessions.size(), sessionA.shortLabel("A"), sessionB.shortLabel("B"));
-            } else if (config.hasManualSessions()) {
-                // Fallback to manual session config
-                logger.info("[Pipeline] 自动发现不足2个会话，使用手动配置的会话");
-                callback.onStageStart(5, "使用手动配置的会话进行越权检测...");
-
-                Map<String, String> cookiesA = SessionDiscovery.parseCookies(config.manualSessionACookie());
-                Map<String, String> cookiesB = SessionDiscovery.parseCookies(config.manualSessionBCookie());
-                sessionA = new SessionInfo("manual-A", cookiesA, Map.of());
-                sessionB = new SessionInfo("manual-B", cookiesB, Map.of());
-
-                // Manual sessions have no requests — need at least one from history for template
-                if (!sessions.isEmpty()) {
-                    for (var req : sessions.get(0).getRequests()) sessionA.addRequest(req);
-                } else if (entry.hasTrafficData()) {
-                    // No history sessions at all — can't build a template request
-                    return AuthTestResult.skipped("手动配置了会话但未找到可用的请求模板，请先访问目标接口");
-                }
             } else {
                 return AuthTestResult.skipped(
                         String.format("仅发现 %d 个会话（需要至少2个不同会话才能进行鉴权对比测试）。"
-                                + "可在「设置 → 越权配置」手动配置两组会话 Cookie，或使用不同账号访问相同接口后重试。",
+                                + "可在「设置 → 越权配置」手动配置会话，或使用不同账号访问相同接口后重试。",
                                 sessions.size()));
             }
 
@@ -1695,9 +1774,16 @@ public class AnalysisPipeline {
                                           AuthTestResult authTestResult,
                                           PipelineCallback callback) {
         try {
-            String systemPrompt = FinalVerdictPrompt.getSystemPrompt();
+            // P2-2: mint one nonce per Stage 6 run and share it between system +
+            // user prompt so the fence markers the model sees match the fence
+            // instruction it was given. Pre-P2-2 used a fixed, guessable
+            // === UNTRUSTED HTTP DATA === marker (the very bypass UntrustedContent
+            // was built to eliminate) at the stage that embeds the most attacker
+            // data in the whole pipeline.
+            UntrustedContent fence = UntrustedContent.forRun();
+            String systemPrompt = FinalVerdictPrompt.getSystemPrompt(fence);
             String baselineResponse = entry.getLastRawResponse();
-            String userPrompt = FinalVerdictPrompt.buildUserPrompt(
+            String userPrompt = FinalVerdictPrompt.buildUserPrompt(fence,
                     entry.getHttpMethod(), entry.getApiPath(), entry.getDomain(),
                     trafficAnalysis, sourceCode, testCases, payloadResults,
                     baselineResponse, authTestResult);
@@ -1738,17 +1824,34 @@ public class AnalysisPipeline {
             return new FinalVerdict("LOW", List.of(), List.of(), raw, "", totalTokens);
         }
 
-        String overallRisk = JsonExtractor.getStr(json, "overall_risk", "SAFE");
+        // P1-1 schema enforcement: normalize the risk to one of the four
+        // valid enum values. A model that emits "CRITICAL" / "HIGH RISK"
+        // / "none" / "unknown" would otherwise propagate a free-form
+        // string downstream — UI renders it literally, persistence
+        // stores it, and every filter that keys on risk becomes wrong.
+        String overallRisk = normalizeRisk(JsonExtractor.getStr(json, "overall_risk", "SAFE"));
 
         List<ConfirmedVuln> confirmed = new ArrayList<>();
+        int droppedConfirmed = 0;
         if (json.has("confirmed_vulns") && json.get("confirmed_vulns").isJsonArray()) {
             JsonArray arr = json.getAsJsonArray("confirmed_vulns");
             for (var elem : arr) {
-                if (!elem.isJsonObject()) continue;
+                if (!elem.isJsonObject()) { droppedConfirmed++; continue; }
                 JsonObject v = elem.getAsJsonObject();
+                String type = JsonExtractor.getStr(v, "type", "").trim();
+                String title = JsonExtractor.getStr(v, "title", "").trim();
+                // P1-1: drop confirmed entries that lack both type and
+                // title — they're hallucinated placeholders the model
+                // emitted to satisfy the schema shape. Downstream
+                // VerdictValidator already requires real evidence, so
+                // keeping these would just waste its cycles.
+                if (type.isEmpty() && title.isEmpty()) {
+                    droppedConfirmed++;
+                    continue;
+                }
                 confirmed.add(new ConfirmedVuln(
-                        JsonExtractor.getStr(v, "type", "UNKNOWN"),
-                        JsonExtractor.getStr(v, "title", ""),
+                        type.isEmpty() ? "UNKNOWN" : type,
+                        title,
                         JsonExtractor.getStr(v, "evidence", ""),
                         JsonExtractor.getStr(v, "payload_used", ""),
                         JsonExtractor.getStr(v, "response_snippet", ""),
@@ -1758,16 +1861,29 @@ public class AnalysisPipeline {
                 ));
             }
         }
+        if (droppedConfirmed > 0) {
+            logger.warn("[Pipeline] 阶段6丢弃了 %d 个空壳 confirmed 条目 (无 type/title)", droppedConfirmed);
+        }
 
         List<SuspectedVuln> suspected = new ArrayList<>();
+        int droppedSuspected = 0;
         if (json.has("suspected_vulns") && json.get("suspected_vulns").isJsonArray()) {
             JsonArray arr = json.getAsJsonArray("suspected_vulns");
             for (var elem : arr) {
-                if (!elem.isJsonObject()) continue;
+                if (!elem.isJsonObject()) { droppedSuspected++; continue; }
                 JsonObject v = elem.getAsJsonObject();
+                String type = JsonExtractor.getStr(v, "type", "").trim();
+                String title = JsonExtractor.getStr(v, "title", "").trim();
+                // P1-1: same drop-empty rule as confirmed — a suspected
+                // entry with no type and no title is a schema-filler,
+                // not an actual finding.
+                if (type.isEmpty() && title.isEmpty()) {
+                    droppedSuspected++;
+                    continue;
+                }
                 suspected.add(new SuspectedVuln(
-                        JsonExtractor.getStr(v, "type", "UNKNOWN"),
-                        JsonExtractor.getStr(v, "title", ""),
+                        type.isEmpty() ? "UNKNOWN" : type,
+                        title,
                         JsonExtractor.getStr(v, "reason", ""),
                         JsonExtractor.getStr(v, "verify_command", ""),
                         "MEDIUM",
@@ -1775,12 +1891,38 @@ public class AnalysisPipeline {
                 ));
             }
         }
+        if (droppedSuspected > 0) {
+            logger.warn("[Pipeline] 阶段6丢弃了 %d 个空壳 suspected 条目 (无 type/title)", droppedSuspected);
+        }
 
         String summary = JsonExtractor.getStr(json, "summary", "");
         String recommendations = JsonExtractor.getStr(json, "recommendations", "");
 
         return VerdictValidator.validate(overallRisk, confirmed, suspected,
                 summary, recommendations, totalTokens, payloadResults, true, authTestResult);
+    }
+
+    /** P1-1: coerce the free-form risk string the model emits into
+     *  one of the four values the downstream pipeline/UI/persistence
+     *  actually understand. Models routinely invent "CRITICAL", "HIGH
+     *  RISK", "none", "unknown", "medium-risk" etc — all of which
+     *  would otherwise propagate downstream and break every filter
+     *  that keys on risk. */
+    private static String normalizeRisk(String raw) {
+        if (raw == null) return "SAFE";
+        String upper = raw.trim().toUpperCase(java.util.Locale.ROOT)
+                .replace("-", " ").replace("_", " ");
+        if (upper.equals("HIGH") || upper.startsWith("HIGH ")) return "HIGH";
+        if (upper.equals("MEDIUM") || upper.startsWith("MEDIUM ")
+                || upper.equals("MODERATE")) return "MEDIUM";
+        if (upper.equals("LOW") || upper.startsWith("LOW ")) return "LOW";
+        if (upper.equals("SAFE") || upper.equals("NONE")
+                || upper.equals("NO RISK") || upper.equals("NO_RISK")
+                || upper.equals("CLEAN") || upper.equals("OK")) return "SAFE";
+        // Unknown risk value — default to SAFE rather than propagating
+        // a string the UI can't render correctly. Log so the operator
+        // sees the model is emitting free-form risk values.
+        return "SAFE";
     }
 
     /**
@@ -1867,39 +2009,36 @@ public class AnalysisPipeline {
      * from scratch, cutting repeated reasoning (and tokens). Returns "" when there
      * is no recent usable analysis (window=0 disables the feature).
      */
-    private String buildPriorAnalysisContext(ApiEntry entry) {
-        if (reuseWindowMinutes <= 0) return "";
+    /** P2-6: if the prior analysis was SAFE and the raw request/response
+     *  hasn't changed, return the prior AnalysisResult so Stage 1 can skip
+     *  its LLM call entirely. Returns null when reuse isn't safe (no prior,
+     *  expired, non-SAFE, or traffic changed). */
+    private AnalysisResult tryReusePriorAnalysis(ApiEntry entry) {
+        if (reuseWindowMinutes <= 0) return null;
         try {
-            com.flechazo.apisentinel.model.AnalysisRecord latest = entry.getLatestAnalysisRecord();
-            if (latest == null) return "";
+            var latest = entry.getLatestAnalysisRecord();
+            if (latest == null || !latest.hasPipelineResult()) return null;
             long ageMs = System.currentTimeMillis() - latest.timestamp();
-            if (ageMs < 0 || ageMs > reuseWindowMinutes * 60_000L) return "";
-            if (!latest.hasPipelineResult() || latest.pipelineResult().verdict() == null) return "";
+            if (ageMs < 0 || ageMs > reuseWindowMinutes * 60_000L) return null;
 
             var verdict = latest.pipelineResult().verdict();
-            StringBuilder sb = new StringBuilder();
-            sb.append("## 上次分析结论（").append(reuseWindowMinutes).append(" 分钟内，作为已知起点，请确认/修正而非重新推导）\n");
-            sb.append("总体风险: ").append(verdict.overallRisk()).append("\n");
-            if (verdict.confirmedVulns() != null && !verdict.confirmedVulns().isEmpty()) {
-                sb.append("已确认漏洞:\n");
-                for (var cv : verdict.confirmedVulns()) {
-                    sb.append("- [").append(cv.type()).append("] ").append(cv.title()).append("\n");
-                }
-            }
-            if (verdict.suspectedVulns() != null && !verdict.suspectedVulns().isEmpty()) {
-                sb.append("疑似漏洞:\n");
-                for (var sv : verdict.suspectedVulns()) {
-                    sb.append("- [").append(sv.type()).append("] ").append(sv.title()).append("\n");
-                }
-            }
-            if (verdict.summary() != null && !verdict.summary().isBlank()) {
-                String s = verdict.summary();
-                sb.append("摘要: ").append(s.length() > 800 ? s.substring(0, 800) + "..." : s).append("\n");
-            }
-            return sb.toString();
+            if (verdict == null) return null;
+            // Only reuse SAFE verdicts — reusing a HIGH/confirmed verdict
+            // would skip the verification that the vuln is still there.
+            if (!"SAFE".equalsIgnoreCase(verdict.overallRisk())) return null;
+
+            // The prior trafficAnalysis IS the reusable result.
+            var priorTraffic = latest.pipelineResult().trafficAnalysis();
+            if (priorTraffic == null || !priorTraffic.isSuccess()) return null;
+
+            return priorTraffic;
         } catch (Exception e) {
-            return "";
+            return null;
         }
+    }
+
+    private String buildPriorAnalysisContext(ApiEntry entry) {
+        return PriorAnalysisContextBuilder.build(entry, reuseWindowMinutes);
     }
 
     private String extractParameters(String body, String url) {

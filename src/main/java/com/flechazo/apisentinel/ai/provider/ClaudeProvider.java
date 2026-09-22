@@ -192,7 +192,8 @@ public class ClaudeProvider implements LlmProvider {
         return (ovr != null && !ovr.isBlank()) ? ovr : model;
     }
 
-    private JsonObject buildRequestBody(LlmRequest request, Integer thinkingBudget) {
+    /** Visible-for-testing only. Normal callers go through {@link #complete(LlmRequest)}. */
+    JsonObject buildRequestBody(LlmRequest request, Integer thinkingBudget) {
         JsonObject body = new JsonObject();
         body.addProperty("model", effectiveModel(request));
         body.addProperty("max_tokens", request.maxTokens());
@@ -222,6 +223,13 @@ public class ClaudeProvider implements LlmProvider {
                 tool.add("input_schema", td.inputSchema());
                 toolsArray.add(tool);
             }
+            // Prompt-caching breakpoint #1: cache the full tool catalog on
+            // the LAST tool definition. Tools are stable within a phase, so
+            // across an Agent run's iterations the ~3-8K tokens of tool
+            // schemas hit the 1h cache instead of being re-billed every turn.
+            if (request.isMultiTurn() && !toolsArray.isEmpty()) {
+                attachEphemeralCacheControl(toolsArray, toolsArray.size() - 1);
+            }
             body.add("tools", toolsArray);
         }
 
@@ -229,35 +237,170 @@ public class ClaudeProvider implements LlmProvider {
         // system prompt so downstream JSON parsing doesn't have to salvage
         // markdown-wrapped or free-text responses.
         if ("json".equals(request.responseFormat())) {
-            JsonElement sysEl = body.get("system");
-            String sys = (sysEl != null && sysEl.isJsonPrimitive()) ? sysEl.getAsString() : "";
-            String jsonInstr = "\n\nIMPORTANT: You must respond with a single valid JSON object only. "
-                    + "Do not wrap it in markdown code fences. Do not add any prose before or after.";
-            body.addProperty("system", (sys == null ? "" : sys) + jsonInstr);
+            appendJsonFormatInstruction(body);
+        }
+
+        // Prompt-caching breakpoint #2: convert the (merged-by-P0-1) system
+        // string into the content-block array form and mark the first block
+        // with cache_control. The main prompt is the stable portion (~5K tokens
+        // of SafetyRules / tool rules / GoT / analysis strategy), while
+        // dynamic injections (reflection, findings, validation) land after
+        // it in the same buffer. Because P0-1 keeps the buffer's prefix
+        // stable across iterations, the cache actually hits on turn 2+.
+        if (request.isMultiTurn() && body.has("system") && body.get("system").isJsonPrimitive()) {
+            body.add("system", wrapSystemAsCachedBlocks(body.get("system").getAsString()));
+        }
+
+        // Prompt-caching breakpoint #3: cache everything up to and including
+        // the last user message. Each turn the cache grows by one assistant+user
+        // pair; the next turn reads all of it and only pays for the new pair.
+        if (request.isMultiTurn() && body.has("messages") && body.get("messages").isJsonArray()) {
+            JsonArray msgs = body.getAsJsonArray("messages");
+            if (!msgs.isEmpty()) {
+                attachEphemeralCacheControl(msgs, msgs.size() - 1);
+            }
         }
 
         return body;
     }
 
-    private void buildSingleTurnBody(JsonObject body, LlmRequest request) {
+    /** Appends the JSON-only formatting hint to whatever system prompt is
+     *  already on the body, regardless of whether it's a plain string or
+     *  the new content-block array form. Kept as a separate step so the
+     *  cache-control marking (which runs after this) sees the final text. */
+    private static void appendJsonFormatInstruction(JsonObject body) {
+        String jsonInstr = "IMPORTANT: You must respond with a single valid JSON object only. "
+                + "Do not wrap it in markdown code fences. Do not add any prose before or after.";
+        if (!body.has("system")) {
+            body.addProperty("system", jsonInstr);
+            return;
+        }
+        if (body.get("system").isJsonPrimitive()) {
+            String sys = body.get("system").getAsString();
+            body.addProperty("system", sys + "\n\n" + jsonInstr);
+            return;
+        }
+        // Already converted to a content-block array — append to the last text block.
+        JsonArray blocks = body.getAsJsonArray("system");
+        if (blocks == null || blocks.isEmpty()) {
+            body.addProperty("system", jsonInstr);
+            return;
+        }
+        JsonObject last = blocks.get(blocks.size() - 1).getAsJsonObject();
+        if (last != null && last.has("text") && last.get("text").isJsonPrimitive()) {
+            last.addProperty("text", last.get("text").getAsString() + "\n\n" + jsonInstr);
+        } else {
+            JsonObject extra = new JsonObject();
+            extra.addProperty("type", "text");
+            extra.addProperty("text", jsonInstr);
+            blocks.add(extra);
+        }
+    }
+
+    /** Converts a merged system string into the content-block array form
+     *  Anthropic's prompt-caching API requires, and marks the first block
+     *  with {@code cache_control: {"type": "ephemeral"}}. We split on the
+     *  P0-1 separator ("\n\n") so the stable main prompt becomes one block
+     *  (the cached one) and each dynamic injection becomes its own block
+     *  afterwards — this way the cache hit rate isn't disturbed when the
+     *  injections change content between turns. */
+    private static JsonArray wrapSystemAsCachedBlocks(String merged) {
+        JsonArray blocks = new JsonArray();
+        if (merged == null || merged.isEmpty()) return blocks;
+        String[] parts = merged.split("\n\n", -1);
+        for (int i = 0; i < parts.length; i++) {
+            JsonObject block = new JsonObject();
+            block.addProperty("type", "text");
+            block.addProperty("text", parts[i]);
+            if (i == 0) {
+                // First block = the stable main prompt. Mark it so the
+                // 1h TTL cache actually latches onto it across turns.
+                JsonObject cc = new JsonObject();
+                cc.addProperty("type", "ephemeral");
+                block.add("cache_control", cc);
+            }
+            blocks.add(block);
+        }
+        return blocks;
+    }
+
+    /** Adds {@code cache_control: {"type": "ephemeral"}} to the JSON object
+     *  at {@code index} in {@code array}. Silently no-ops if the element at
+     *  that index isn't an object (defensive — e.g. a future call site that
+     *  passes a primitive array shouldn't crash). */
+    private static void attachEphemeralCacheControl(JsonArray array, int index) {
+        if (array == null || index < 0 || index >= array.size()) return;
+        if (!array.get(index).isJsonObject()) return;
+        JsonObject target = array.get(index).getAsJsonObject();
+        JsonObject cc = new JsonObject();
+        cc.addProperty("type", "ephemeral");
+        target.add("cache_control", cc);
+    }
+
+    /** Visible-for-testing only. Normal callers go through {@link #complete(LlmRequest)}. */
+    void buildSingleTurnBody(JsonObject body, LlmRequest request) {
+        // Collect any system-role entries from the message list (defensive:
+        // single-turn normally carries its prompt via request.systemPrompt()
+        // set below, but some callers also add ChatMessage.system(...) directly).
+        // Concatenate in arrival order so the main prompt always precedes any
+        // dynamic injection (reflection / findings / validation summary).
+        StringBuilder systemBuf = new StringBuilder();
         if (request.systemPrompt() != null && !request.systemPrompt().isEmpty()) {
-            body.addProperty("system", request.systemPrompt());
+            systemBuf.append(request.systemPrompt());
         }
         JsonArray messages = new JsonArray();
-        JsonObject userMsg = new JsonObject();
-        userMsg.addProperty("role", "user");
-        userMsg.addProperty("content", request.userPrompt());
-        messages.add(userMsg);
+        for (ChatMessage msg : request.messages() != null ? request.messages() : java.util.List.<ChatMessage>of()) {
+            if ("system".equals(msg.role())) {
+                if (!systemBuf.isEmpty()) systemBuf.append("\n\n");
+                systemBuf.append(msg.content() != null ? msg.content() : "");
+            } else {
+                JsonObject m = new JsonObject();
+                m.addProperty("role", msg.role());
+                m.addProperty("content", msg.content());
+                messages.add(m);
+            }
+        }
+        // Fallback: if no system messages came from the message list, add a
+        // single user turn so the request is still well-formed.
+        if (messages.size() == 0) {
+            JsonObject userMsg = new JsonObject();
+            userMsg.addProperty("role", "user");
+            userMsg.addProperty("content", request.userPrompt() != null ? request.userPrompt() : "");
+            messages.add(userMsg);
+        }
+        if (!systemBuf.isEmpty()) {
+            body.addProperty("system", systemBuf.toString());
+        }
         body.add("messages", messages);
     }
 
-    private void buildMultiTurnBody(JsonObject body, LlmRequest request) {
+    /** Visible-for-testing only. Normal callers go through {@link #complete(LlmRequest)}. */
+    void buildMultiTurnBody(JsonObject body, LlmRequest request) {
+        // Single-system principle (P0-1 fix): pre-2026-09-06 the loop below
+        // called body.addProperty("system", msg.content()) for every system
+        // message, and Gson's JsonObject overwrites duplicate keys — so in
+        // a 20-iteration Agent run the original 5.2K main system prompt
+        // (SafetyRules, tool-use rules, GoT, analysis strategy) was silently
+        // evicted by the last reflection/findings/validation injection.
+        //
+        // Fix: accumulate every system-role message into a single buffer,
+        // in the order they appear in the message list (which is the order
+        // AgentLoop appends: main prompt first, then dynamic injections).
+        // We also prepend request.systemPrompt() so callers that set the
+        // prompt via the request field (instead of a ChatMessage.system
+        // entry) still land at the front.
+        StringBuilder systemBuf = new StringBuilder();
+        if (request.systemPrompt() != null && !request.systemPrompt().isEmpty()) {
+            systemBuf.append(request.systemPrompt());
+        }
+
         JsonArray messages = new JsonArray();
         JsonArray pendingToolResults = null;
 
         for (ChatMessage msg : request.messages()) {
             if ("system".equals(msg.role())) {
-                body.addProperty("system", msg.content());
+                if (!systemBuf.isEmpty()) systemBuf.append("\n\n");
+                systemBuf.append(msg.content() != null ? msg.content() : "");
                 continue;
             }
 
@@ -335,6 +478,11 @@ public class ClaudeProvider implements LlmProvider {
             messages.add(userMsg);
         }
 
+        // Write the merged system prompt ONCE, after the loop — so the main
+        // prompt + all dynamic injections survive together.
+        if (!systemBuf.isEmpty()) {
+            body.addProperty("system", systemBuf.toString());
+        }
         body.add("messages", messages);
     }
 
@@ -350,10 +498,21 @@ public class ClaudeProvider implements LlmProvider {
 
         int inputTokens = 0;
         int outputTokens = 0;
+        int cacheCreation = 0;
+        int cacheRead = 0;
         if (result.has("usage") && !result.get("usage").isJsonNull()) {
             JsonObject usage = result.getAsJsonObject("usage");
             if (usage.has("input_tokens")) inputTokens = usage.get("input_tokens").getAsInt();
             if (usage.has("output_tokens")) outputTokens = usage.get("output_tokens").getAsInt();
+            // Prompt-caching accounting: Anthropic reports cache write/read
+            // as separate fields. input_tokens EXCLUDES both, so the true
+            // billable input is input_tokens + cache_creation + cache_read.
+            if (usage.has("cache_creation_input_tokens")) {
+                cacheCreation = usage.get("cache_creation_input_tokens").getAsInt();
+            }
+            if (usage.has("cache_read_input_tokens")) {
+                cacheRead = usage.get("cache_read_input_tokens").getAsInt();
+            }
         }
 
         String stopReason = "end_turn";
@@ -400,50 +559,35 @@ public class ClaudeProvider implements LlmProvider {
 
         return new LlmResponse(textContent.toString(), inputTokens, outputTokens,
                 latency, model, reason, null, toolCalls.isEmpty() ? null : toolCalls,
-                thinkingTextOut, rawThinkingBlocksJson);
+                thinkingTextOut, rawThinkingBlocksJson, cacheCreation, cacheRead);
     }
 
+    // Retry helpers delegated to shared HttpRetryHelper (was duplicated
+    // across ClaudeProvider / OpenAiProvider / OllamaProvider).
     private static long computeBackoffMs(HttpResponse<String> resp, int attempt) {
-        // Honor Retry-After (seconds). Claude also sends anthropic-ratelimit-reset
-        // but that's a timestamp; fall back to exponential backoff if unparseable.
-        String ra = resp.headers().firstValue("retry-after").orElse(null);
-        if (ra != null) {
-            try {
-                long ms = Long.parseLong(ra.trim()) * 1000L;
-                if (ms > 0) return Math.min(ms, 30000L);
-            } catch (NumberFormatException ignored) { /* HTTP-date form, fall back */ }
-        }
-        // Exponential: attempt 0 -> 2s, 1 -> 4s, capped at 30s
-        return Math.min(2000L * (1L << attempt), 30000L);
+        return HttpRetryHelper.computeBackoffMs(resp, attempt);
     }
 
     private static String truncateBody(String body) {
-        if (body == null) return "";
-        return body.length() <= 500 ? body : body.substring(0, 500) + "...";
+        return HttpRetryHelper.truncateBody(body);
     }
 
     private static boolean isRetryable(Exception e) {
-        String msg = (e.getMessage() != null ? e.getMessage() : "").toLowerCase();
-        Throwable cause = e.getCause();
-        String causeMsg = cause != null && cause.getMessage() != null ? cause.getMessage().toLowerCase() : "";
-
-        return msg.contains("eof") || msg.contains("end of file")
-                || msg.contains("connection reset") || msg.contains("broken pipe")
-                || msg.contains("stream is closed") || msg.contains("premature")
-                || causeMsg.contains("eof") || causeMsg.contains("end of file")
-                || causeMsg.contains("connection reset") || causeMsg.contains("broken pipe")
-                || causeMsg.contains("stream is closed") || causeMsg.contains("premature")
-                || e instanceof java.io.EOFException
-                || cause instanceof java.io.EOFException;
+        return HttpRetryHelper.isRetryable(e);
     }
 
     @Override
     public int estimateTokens(String text) {
-        return (int) (text.length() / 3.5);
+        return LlmProvider.estimateTokensDefault(text);
     }
 
     @Override
     public boolean isAvailable() {
         return apiKey != null && !apiKey.isBlank();
+    }
+
+    @Override
+    public void close() {
+        HttpRetryHelper.closeHttpClient(httpClient);
     }
 }

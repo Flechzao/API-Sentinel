@@ -33,6 +33,75 @@ class VerdictValidatorTest {
         return new SuspectedVuln(type, title, reason, "curl ...");
     }
 
+    /** Agent-mode PayloadResult tagged with a session + execution index. */
+    private static PayloadResult sessionResult(int idx, String path, String session, String respBody) {
+        return new PayloadResult(null,
+                "POST " + path + " HTTP/1.1\r\n\r\nbody",
+                "HTTP/1.1 200\r\nContent-Type: application/json\r\n\r\n" + respBody,
+                200, 50, false, 0L, idx, null, 0, session, false);
+    }
+
+    // ===== IDOR (auth-class) two-session confirmation must survive =====
+
+    @Test
+    void idor_twoSession_codeEvidence_survivesAsConfirmed() {
+        // Regression: a genuine IDOR proven by two sessions on the SAME
+        // gateway endpoint was false-demoted to suspected because (a) its
+        // "response" snippet wasn't a verbatim slice of a captured body and
+        // (b) the response-substring gate applied to auth-class. Auth-class is
+        // now anchored by the two-session cross-check, not a response substring.
+        String path = "/api/v1/v3/api/";
+        PayloadResult sessA = sessionResult(0, path, "session_A", "{\"peerAccountId\":\"111111111111\"}");
+        PayloadResult sessB = sessionResult(1, path, "session_B", "{\"peerAccountId\":\"111111111111\"}");
+        ConfirmedVuln idor = new ConfirmedVuln(
+                "越权访问/IDOR（水平越权）", "缺少资源归属校验",
+                "代码证据：Controller→Service.getDetail 无 uid 校验（非响应子串）",
+                "requestBody={\"innerPeeringId\":\"peering_test_001\"}",
+                "会话B读到会话A的 accountId（人类描述，非逐字响应）",
+                "curl ...",
+                "会话B读到会话A的资源，匿名访问 401", "", 1);
+        FinalVerdict v = VerdictValidator.validate("HIGH", List.of(idor), List.of(),
+                "summary", "rec", 0, List.of(sessA, sessB), false);
+        assertEquals(1, v.confirmedVulns().size(),
+                "IDOR should survive as confirmed; suspected=" + v.suspectedVulns());
+        assertEquals("HIGH", v.overallRisk());
+    }
+
+    @Test
+    void markConfirmedPayloads_marksBothIdorSessionPackets() {
+        // The two-session evidence pair must both render as 已确认 (not just the
+        // cited one), so the test-case list doesn't show "无风险" on a proven IDOR.
+        String path = "/api/v1/v3/api/";
+        PayloadResult sessA = sessionResult(0, path, "session_A", "{\"x\":1}");
+        PayloadResult sessB = sessionResult(1, path, "session_B", "{\"x\":1}");
+        ConfirmedVuln idor = new ConfirmedVuln(
+                "越权访问/IDOR", "缺少归属校验", "代码证据", "payload",
+                "resp", "curl ...", "身份证据", "", 1);
+        FinalVerdict v = VerdictValidator.validate("HIGH", List.of(idor), List.of(),
+                "s", "r", 0, List.of(sessA, sessB), false);
+        assertEquals(1, v.confirmedVulns().size());
+
+        List<PayloadResult> marked = VerdictValidator.markConfirmedPayloads(v, List.of(sessA, sessB));
+        assertTrue(marked.get(0).showsAsVerified(), "owner-session packet should be marked confirmed");
+        assertTrue(marked.get(1).showsAsVerified(), "attacker-session packet should be marked confirmed");
+    }
+
+    @Test
+    void idor_misCitedIndex_fallsBackToPairSearch() {
+        // A slightly-wrong cited_execution_index must not hard-fail the auth
+        // cross-check when the two-session evidence still exists in the batch.
+        String path = "/api/v1/v3/api/";
+        PayloadResult sessA = sessionResult(0, path, "session_A", "{\"x\":1}");
+        PayloadResult sessB = sessionResult(1, path, "session_B", "{\"x\":1}");
+        ConfirmedVuln idor = new ConfirmedVuln(
+                "越权访问/IDOR", "缺少归属校验", "代码证据", "payload",
+                "resp", "curl ...", "会话B读到会话A数据，匿名 401", "", 99 /* nonexistent index */);
+        FinalVerdict v = VerdictValidator.validate("HIGH", List.of(idor), List.of(),
+                "summary", "rec", 0, List.of(sessA, sessB), false);
+        assertEquals(1, v.confirmedVulns().size(),
+                "mis-cited index should fall back to pair search; suspected=" + v.suspectedVulns());
+    }
+
     // ===== Phase 2: informational-only blacklist backstop =====
 
     @Test
@@ -75,6 +144,36 @@ class VerdictValidatorTest {
 
         assertTrue(v.suspectedVulns().isEmpty(), "informational suspected should be removed");
         assertTrue(v.summary().contains("加固") || v.summary().contains("信息级"));
+    }
+
+    // ===== P2-2: rule 7 internal-IP programmatic backstop =====
+
+    @Test
+    void internalIpLeak_noChain_removed() {
+        // Pre-P2-2 this sailed past the backstop — no "内网ip" keyword
+        // existed in INFORMATIONAL_TYPE_KEYWORDS, so an LLM typing the
+        // finding as "内网IP泄露" produced a confirmed (the IP verbatim
+        // appears in the response, so evidenceTiesToRealResponse passes).
+        // Now rule 7 has a programmatic backstop and removes it.
+        SuspectedVuln ip = suspectedVuln("内网IP泄露", "错误页泄露内网地址",
+                "响应错误页出现 10.0.0.5 内网地址，无利用链");
+        FinalVerdict v = VerdictValidator.validate("LOW", List.of(), List.of(ip),
+                "summary", "", 100, List.of(), false);
+        assertTrue(v.suspectedVulns().isEmpty(),
+                "internal-IP leak without a chain should be removed by rule 7 backstop");
+    }
+
+    @Test
+    void internalIpLeak_partOfSsrfChain_survives() {
+        // Rule 7 carve-out: an internal IP that came back as part of an SSRF
+        // data-return chain is NOT informational. The chain keyword
+        // (内网数据/metadata) in the reason exempts it.
+        SuspectedVuln ip = suspectedVuln("内网IP泄露", "SSRF 返回内网数据",
+                "SSRF 链路访问 169.254.169.254 返回内网数据 metadata");
+        FinalVerdict v = VerdictValidator.validate("MEDIUM", List.of(), List.of(ip),
+                "summary", "", 100, List.of(), false);
+        assertEquals(1, v.suspectedVulns().size(),
+                "internal-IP finding with a real SSRF data-return chain must survive");
     }
 
     @Test
@@ -309,12 +408,23 @@ class VerdictValidatorTest {
 
     @Test
     void markConfirmedPayloads_cleanResult_forceMarked() {
+        // P0-8 #5: the pre-P0-8 behaviour was to rewrite anomalyDetected
+        // to true, which destroyed the original observation. The new
+        // behaviour keeps anomalyDetected untouched and flips the
+        // dedicated claimedByVerdict flag instead — the UI's green check
+        // now renders on showsAsVerified() (anomaly || claimed), while
+        // audit / export layers can tell the two apart.
         FinalVerdict verdict = new FinalVerdict("HIGH", List.of(confirmedVuln("p1")),
                 List.of(), "s", "r", 10);
         List<PayloadResult> marked = VerdictValidator.markConfirmedPayloads(verdict,
                 List.of(pipelineResult("p1", false)));
 
-        assertTrue(marked.get(0).anomalyDetected());
+        assertFalse(marked.get(0).anomalyDetected(),
+                "P0-8: anomalyDetected must NOT be rewritten — the original observation is preserved");
+        assertTrue(marked.get(0).claimedByVerdict(),
+                "P0-8: claimedByVerdict is set when the result matches a surviving confirmed");
+        assertTrue(marked.get(0).showsAsVerified(),
+                "UI-facing helper: green-check condition still holds (anomaly || claimed)");
     }
 
     // ===== Phase 4: identity audit =====
@@ -397,7 +507,8 @@ class VerdictValidatorTest {
                 List.of(), false);
 
         assertTrue(v.confirmedVulns().isEmpty());
-        assertTrue(v.rejectionReasons().stream().anyMatch(r -> r.contains("payload 校验失败")),
+        assertTrue(v.rejectionReasons().stream().anyMatch(r ->
+                        r.contains("confirmed 降级") && r.contains("未在实际发送的请求中找到")),
                 "demotion reasons should be structured: " + v.rejectionReasons());
     }
 

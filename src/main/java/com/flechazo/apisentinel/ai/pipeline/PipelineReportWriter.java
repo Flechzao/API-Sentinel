@@ -47,6 +47,16 @@ public class PipelineReportWriter {
      * @return the path to the saved report, or null if saving failed.
      */
     public Path saveReport(ApiEntry entry, PipelineResult result, TrafficStats trafficStats) {
+        return saveReportWithChat(entry, result, trafficStats, List.of());
+    }
+
+    /**
+     * Save a complete pipeline report to disk, including chat history.
+     * @param chatHistory optional conversation history as List of {role, content} Maps
+     * @return the path to the saved report, or null if saving failed.
+     */
+    public Path saveReportWithChat(ApiEntry entry, PipelineResult result, TrafficStats trafficStats,
+                           List<Object> chatHistory) {
         try {
             Files.createDirectories(reportsDir);
 
@@ -57,6 +67,12 @@ public class PipelineReportWriter {
             Path reportFile = reportsDir.resolve(filename);
 
             Map<String, Object> report = buildReport(entry, result, trafficStats);
+
+            // Append chat history if available
+            if (chatHistory != null && !chatHistory.isEmpty()) {
+                report.put("stage6_chatHistory", chatHistory);
+            }
+
             String json = GSON.toJson(report);
             Files.writeString(reportFile, json);
 
@@ -105,7 +121,7 @@ public class PipelineReportWriter {
                 logger.info("[Report] 自动清理了 %d 个旧报告，保留最新 %d 个", toDelete, MAX_REPORTS);
             }
         } catch (IOException e) {
-            logger.debug("[Report] 清理旧报告失败: %s", e.getMessage());
+            logger.warn("[Report] 清理旧报告失败: %s", e.getMessage());
         }
     }
 
@@ -211,6 +227,11 @@ public class PipelineReportWriter {
             prm.put("statusCode", pr.statusCode());
             prm.put("responseTimeMs", pr.responseTimeMs());
             prm.put("anomalyDetected", pr.anomalyDetected());
+            prm.put("executionIndex", pr.executionIndex());
+            prm.put("authSession", pr.authSession());
+            prm.put("wafVendor", pr.wafVendor());
+            prm.put("wafScore", pr.wafScore());
+            prm.put("claimedByVerdict", pr.claimedByVerdict());
             payloadResults.add(prm);
         }
         long anomalyCount = result.payloadResults().stream().filter(PayloadResult::anomalyDetected).count();
@@ -239,6 +260,12 @@ public class PipelineReportWriter {
             cvm.put("payloadUsed", cv.payloadUsed());
             cvm.put("response", cv.response());
             cvm.put("verifyCommand", cv.verifyCommand());
+            if (cv.identityProof() != null && !cv.identityProof().isEmpty()) {
+                cvm.put("identityProof", cv.identityProof());
+            }
+            if (cv.cvss() != null && !cv.cvss().isEmpty()) {
+                cvm.put("cvss", cv.cvss());
+            }
             confirmed.add(cvm);
         }
         stage5.put("confirmedVulns", confirmed);
@@ -250,9 +277,25 @@ public class PipelineReportWriter {
             svm.put("title", sv.title());
             svm.put("reason", sv.reason());
             svm.put("verifyCommand", sv.verifyCommand());
+            if (sv.confidence() != null && !sv.confidence().isEmpty()) {
+                svm.put("confidence", sv.confidence());
+            }
+            if (sv.escalationPath() != null && !sv.escalationPath().isEmpty()) {
+                svm.put("escalationPath", sv.escalationPath());
+            }
+            if (sv.payloadUsed() != null && !sv.payloadUsed().isEmpty()) {
+                svm.put("payloadUsed", sv.payloadUsed());
+            }
             suspected.add(svm);
         }
         stage5.put("suspectedVulns", suspected);
+
+        // P0-2 fix: Write rejection reasons (anti-hallucination audit trail)
+        if (verdict.rejectionReasons() != null && !verdict.rejectionReasons().isEmpty()) {
+            stage5.put("rejectionReasons", verdict.rejectionReasons());
+            stage5.put("rejectionCount", verdict.rejectionReasons().size());
+        }
+
         report.put("stage5_finalVerdict", stage5);
 
         // === Stage 5 (Auth Test): Authorization bypass test results ===
@@ -299,5 +342,47 @@ public class PipelineReportWriter {
             sanitized = sanitized.substring(0, 80);
         }
         return sanitized.isEmpty() ? "unknown" : sanitized;
+    }
+
+    /**
+     * Update the chat history section of an existing report file in place.
+     *
+     * <p>Used by follow-up conversations in the chat panel: when the user
+     * asks a follow-up question after an analysis completes, the new Q/A
+     * exchanges should be appended to the original report so it reflects the
+     * full conversation. The original analysis data (stages 1-5) is preserved.
+     *
+     * @param reportFile  path to an existing report JSON file
+     * @param chatHistory the updated conversation history (full, not incremental)
+     * @return true if the file was updated successfully
+     */
+    public boolean updateChatHistory(Path reportFile, List<Object> chatHistory) {
+        if (reportFile == null || !Files.exists(reportFile)) {
+            logger.debug("[Report] updateChatHistory: file does not exist: %s", reportFile);
+            return false;
+        }
+        if (chatHistory == null || chatHistory.isEmpty()) {
+            return true; // Nothing to write, treat as success.
+        }
+        try {
+            String existing = Files.readString(reportFile);
+            com.google.gson.JsonObject root = com.google.gson.JsonParser
+                    .parseString(existing).getAsJsonObject();
+
+            // Build the same shape as saveReportWithChat (role/content maps)
+            com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+            for (Object item : chatHistory) {
+                arr.add(GSON.toJsonTree(item));
+            }
+            root.add("stage6_chatHistory", arr);
+
+            Files.writeString(reportFile, GSON.toJson(root));
+            logger.info("[Report] 追问对话已追加到报告: %s (%d 条消息)",
+                    reportFile.getFileName(), chatHistory.size());
+            return true;
+        } catch (Exception e) {
+            logger.error("[Report] 更新追问对话失败: %s — %s", reportFile, e.getMessage());
+            return false;
+        }
     }
 }

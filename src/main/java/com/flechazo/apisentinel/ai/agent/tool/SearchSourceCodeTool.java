@@ -21,6 +21,9 @@ public class SearchSourceCodeTool implements AgentTool {
     public String name() { return "search_source_code"; }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "Search indexed source code repositories for route handlers matching the API endpoint. "
              + "Returns matched source files, line numbers, and code snippets. Free, no AI cost.";

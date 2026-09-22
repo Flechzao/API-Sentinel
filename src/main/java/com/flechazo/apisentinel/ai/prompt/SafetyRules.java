@@ -110,6 +110,16 @@ public final class SafetyRules {
             "graphql introspection", "introspection",
             "会话未失效", "并发会话", "session未失效",
             "ssl", "tls", "弱套件", "mixed content", "混合内容",
+            // P2-2: rule 7 ("错误页/响应中出现内网 IP") had NO programmatic
+            // backstop pre-P2-2 — INFORMATIONAL_TYPE_KEYWORDS listed no
+            // internal-IP phrase, so an LLM that typed the finding as
+            // "内网IP泄露" / "内网信息泄露" sailed past isInformationalType
+            // and, because the IP verbatim appears in the response (so
+            // evidenceTiesToRealResponse passes), became a confirmed finding.
+            // These specific phrases close that gap; the broad type
+            // "信息泄露" is still deliberately NOT here (a real
+            // sensitive-data exposure legitimately types itself that way).
+            "内网ip", "internal ip", "private ip", "内网地址",
             // SSRF/SQLi here are informational VARIANTS only — the kill-signal
             // phrasing ("仅DNS回连"/"仅报错回显") is what marks them info-only.
             // The full SSRF/SQLi findings survive because their evidence will
@@ -139,6 +149,40 @@ public final class SafetyRules {
             if (lower.contains(kw)) return true;
         }
         return false;
+    }
+
+    /**
+     * P2-2: type + evidence-aware informational check. Same as
+     * {@link #isInformationalType(String)} but lets an internal-IP finding
+     * that is actually part of a real SSRF-returns-internal-data chain
+     * survive (rule 7's "除非是 SSRF 链路返回的内网数据" carve-out).
+     *
+     * <p>Pre-P2-2 the only internal-IP defense was the prompt text; the
+     * programmatic backstop had no "内网ip" keyword at all, so the LLM could
+     * confirm an internal-IP leak by typing the finding generically. This
+     * closes that gap while preserving the chain exemption.
+     *
+     * <p><b>Intentionally NOT broadened to demote generic "SSRF"/"SQL注入"
+     * types</b>: a boolean-blind SQLi legitimately types itself "SQL注入"
+     * with evidence "true/false 响应差异" — a real chain proof that
+     * {@link #hasChainEvidence} does NOT currently recognise (its keyword
+     * set covers 行数据/时间差 but not 响应差异). Broadening via type+keyword
+     * alone would false-demote blind SQLi (a HIGH-value finding). The safe
+     * way to demote a generic SSRF/SQLi-with-only-error-echo is to consult
+     * the cited {@code PayloadResult}'s actual response (did it return data,
+     * or just an error?) — a larger change deferred beyond P2-2. Until then
+     * the kill-signal phrasing ("仅dns"/"仅报错回显") remains the trigger.
+     */
+    public static boolean isInformationalByTypeAndEvidence(String type, String evidence) {
+        if (type == null || type.isBlank()) return false;
+        String lower = type.toLowerCase();
+        // Rule 7 carve-out: an internal-IP finding is informational UNLESS
+        // the evidence shows it came back as part of an SSRF data-return chain.
+        if ((lower.contains("内网") && lower.contains("ip"))
+                || lower.contains("内网ip") || lower.contains("内网地址")) {
+            return !hasChainEvidence(evidence);
+        }
+        return isInformationalType(type);
     }
 
     /** True if the finding's evidence carries a real-exploit-chain keyword

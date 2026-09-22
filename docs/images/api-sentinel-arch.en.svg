@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 880" width="920" height="880" role="img" aria-labelledby="title desc">
+  <title id="title">API-Sentinel Architecture</title>
+  <desc id="desc">Real traffic is normalized into API assets and analyzed by passive checks, Pipeline, Agent, or browser analysis. Evidence gates validate findings before verdict output, report persistence, and MCP access. Passing submission gates does not by itself mean confirmed.</desc>
+  <defs>
+    <marker id="arrowBlue" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto"><path d="M 0 0 L 12 5 L 0 10 Z" fill="#2563eb"/></marker>
+    <marker id="arrowPurple" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto"><path d="M 0 0 L 12 5 L 0 10 Z" fill="#7c3aed"/></marker>
+    <marker id="arrowGreen" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto"><path d="M 0 0 L 12 5 L 0 10 Z" fill="#10a37f"/></marker>
+    <filter id="shadowSoft" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0f172a" flood-opacity="0.08"/></filter>
+    <style>
+      text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .title { font-size: 26px; font-weight: 700; fill: #111827; }
+      .subtitle { font-size: 14px; fill: #6b7280; }
+      .layer-title { font-size: 16px; font-weight: 700; }
+      .layer-subtitle { font-size: 13px; }
+      .node-title { font-size: 16px; font-weight: 700; fill: #111827; }
+      .node-subtitle { font-size: 13px; fill: #6b7280; }
+      .arrow-label { font-size: 12px; font-weight: 600; }
+      .edge { fill: none; stroke-width: 2; stroke-linejoin: round; }
+    </style>
+  </defs>
+  <rect width="920" height="880" fill="#ffffff"/>
+  <text x="460" y="40" text-anchor="middle" class="title">API-Sentinel Architecture</text>
+  <text x="460" y="66" text-anchor="middle" class="subtitle">From traffic capture to evidence validation</text>
+
+  <g id="layer-traffic">
+    <rect x="28" y="94" width="864" height="178" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2" stroke-dasharray="4 4" opacity="0.6"/>
+    <text x="52" y="124" class="layer-title" fill="#2563eb">Traffic capture</text>
+    <text x="52" y="148" class="layer-subtitle" fill="#2563eb">Burp Proxy → Normalization → Repository</text>
+  </g>
+  <g id="layer-analysis">
+    <rect x="28" y="312" width="864" height="200" rx="12" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2" stroke-dasharray="4 4" opacity="0.6"/>
+    <text x="52" y="342" class="layer-title" fill="#7c3aed">Analysis engines</text>
+    <text x="52" y="366" class="layer-subtitle" fill="#7c3aed">Passive checks · Pipeline · Agent · Browser</text>
+  </g>
+  <g id="layer-validation">
+    <rect x="28" y="548" width="864" height="300" rx="12" fill="#f0fdf4" stroke="#10a37f" stroke-width="2" stroke-dasharray="4 4" opacity="0.6"/>
+    <text x="52" y="578" class="layer-title" fill="#10a37f">Validation &amp; output</text>
+    <text x="52" y="602" class="layer-subtitle" fill="#10a37f">Evidence gates · Verdicts · Report persistence · MCP service</text>
+  </g>
+
+  <g class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)">
+    <path d="M 276 210 H 348"/>
+    <path d="M 572 210 H 644"/>
+  </g>
+  <path class="edge" d="M 756 246 V 288 H 906 V 402 H 146" stroke="#7c3aed"/>
+  <g class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)">
+    <path d="M 146 402 V 420"/>
+    <path d="M 356 402 V 420"/>
+    <path d="M 566 402 V 420"/>
+    <path d="M 776 402 V 420"/>
+  </g>
+  <g class="edge" stroke="#10a37f">
+    <path d="M 146 490 V 534 H 906 V 630 H 190 V 646" marker-end="url(#arrowGreen)"/>
+    <path d="M 356 490 V 534"/>
+    <path d="M 566 490 V 534"/>
+    <path d="M 776 490 V 534"/>
+    <path d="M 328 682 H 400" marker-end="url(#arrowGreen)"/>
+    <path d="M 604 682 H 676" marker-end="url(#arrowGreen)"/>
+    <path d="M 190 718 V 756" marker-end="url(#arrowGreen)"/>
+  </g>
+
+  <g id="node-proxy">
+    <rect x="52" y="174" width="224" height="72" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="164" y="204" text-anchor="middle" class="node-title">HTTP Proxy</text>
+    <text x="164" y="229" text-anchor="middle" class="node-subtitle">Burp Proxy</text>
+  </g>
+  <g id="node-match">
+    <rect x="348" y="174" width="224" height="72" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="460" y="204" text-anchor="middle" class="node-title">Normalization</text>
+    <text x="460" y="229" text-anchor="middle" class="node-subtitle">Trie + fuzzy matching</text>
+  </g>
+  <g id="node-repo">
+    <rect x="644" y="174" width="224" height="72" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="756" y="204" text-anchor="middle" class="node-title">Repository</text>
+    <text x="756" y="229" text-anchor="middle" class="node-subtitle">Persistent API assets</text>
+  </g>
+  <g id="node-passive">
+    <rect x="52" y="420" width="188" height="70" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="146" y="448" text-anchor="middle" class="node-title">Passive checks</text>
+    <text x="146" y="473" text-anchor="middle" class="node-subtitle">13 types + 38 rules</text>
+  </g>
+  <g id="node-pipeline">
+    <rect x="262" y="420" width="188" height="70" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="356" y="448" text-anchor="middle" class="node-title">Pipeline</text>
+    <text x="356" y="473" text-anchor="middle" class="node-subtitle">6-stage pipeline</text>
+  </g>
+  <g id="node-agent">
+    <rect x="472" y="420" width="188" height="70" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="566" y="448" text-anchor="middle" class="node-title">Agent</text>
+    <text x="566" y="473" text-anchor="middle" class="node-subtitle">Autonomous ReAct loop</text>
+  </g>
+  <g id="node-browser">
+    <rect x="682" y="420" width="188" height="70" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="776" y="448" text-anchor="middle" class="node-title">Browser</text>
+    <text x="776" y="473" text-anchor="middle" class="node-subtitle">DOM exploration</text>
+  </g>
+  <g id="node-validator">
+    <rect x="52" y="646" width="276" height="72" rx="8" fill="#ffffff" stroke="#10a37f" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="190" y="675" text-anchor="middle" class="node-title">Evidence gates</text>
+    <text x="190" y="700" text-anchor="middle" class="node-subtitle">VerdictValidator + EvidenceSchema</text>
+  </g>
+  <g id="node-result">
+    <rect x="400" y="646" width="204" height="72" rx="8" fill="#ffffff" stroke="#10a37f" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="502" y="675" text-anchor="middle" class="node-title">Validated verdict</text>
+    <text x="502" y="700" text-anchor="middle" class="node-subtitle">confirmed / suspected</text>
+  </g>
+  <g id="node-mcp">
+    <rect x="676" y="646" width="188" height="72" rx="8" fill="#ffffff" stroke="#10a37f" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="770" y="675" text-anchor="middle" class="node-title">MCP Server</text>
+    <text x="770" y="700" text-anchor="middle" class="node-subtitle">External AI access</text>
+  </g>
+  <g id="node-report">
+    <rect x="52" y="756" width="276" height="70" rx="8" fill="#ffffff" stroke="#10a37f" stroke-width="1.5" filter="url(#shadowSoft)"/>
+    <text x="190" y="785" text-anchor="middle" class="node-title">Report persistence</text>
+    <text x="190" y="808" text-anchor="middle" class="node-subtitle">Reports / SiteMap / Organizer</text>
+  </g>
+  <g class="arrow-label" text-anchor="middle">
+    <text x="312" y="197" fill="#2563eb">Raw traffic</text>
+    <text x="608" y="197" fill="#2563eb">API match</text>
+    <text x="460" y="298" fill="#7c3aed">Dispatch analysis tasks</text>
+    <text x="460" y="526" fill="#10a37f">Submit findings</text>
+    <text x="364" y="668" fill="#10a37f">Validate</text>
+    <text x="640" y="668" fill="#10a37f">Expose</text>
+  </g>
+  <text x="210" y="742" class="arrow-label" fill="#10a37f">Persist</text>
+</svg>

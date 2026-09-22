@@ -6,15 +6,22 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Tracks daily token usage against a budget. The date and the counter are held
  * together in an immutable {@link DayBucket} swapped via CAS, so the new-day
- * reset and the usage accounting are atomic — previously they were split across
- * a separate AtomicInteger and AtomicReference, allowing the daily reset to
- * zero out tokens that had just been recorded (TOCTOU) and the budget check to
- * pass for concurrent callers whose combined usage exceeded the budget.
+ * reset and the usage accounting are atomic.
+ *
+ * <p>Supports two enforcement modes:
+ * <ul>
+ *   <li>{@link BudgetMode#ENFORCE} — block LLM calls when daily budget is
+ *       exceeded (default, original behavior).</li>
+ *   <li>{@link BudgetMode#MONITOR_ONLY} — record usage but never block;
+ *       Agent can see how much it spent but calls always proceed. Use this
+ *       when the LLM provider has unlimited quota (internal models).</li>
+ * </ul>
  */
 public class TokenBudgetManager {
 
     private volatile int dailyBudgetTokens;
     private volatile int perRequestMaxTokens;
+    private volatile BudgetMode budgetMode = BudgetMode.MONITOR_ONLY;
     private final AtomicReference<DayBucket> bucket = new AtomicReference<>(
             new DayBucket(LocalDate.now(), 0));
 
@@ -37,21 +44,19 @@ public class TokenBudgetManager {
         while (true) {
             DayBucket b = bucket.get();
             if (b.date.equals(today)) return b;
-            // New day: swap the whole bucket (date + counter together)
             DayBucket fresh = new DayBucket(today, 0);
             if (bucket.compareAndSet(b, fresh)) return fresh;
-            // Lost the race; re-read (another thread already reset, or day advanced)
         }
     }
 
     public boolean canProceed() {
+        if (budgetMode == BudgetMode.MONITOR_ONLY) return true;
         return current().used < dailyBudgetTokens;
     }
 
     public boolean canProceed(int estimatedTokens) {
+        if (budgetMode == BudgetMode.MONITOR_ONLY) return true;
         if (estimatedTokens > perRequestMaxTokens) return false;
-        // CAS loop: atomically verify headroom and reserve the tokens so two
-        // concurrent callers can't both pass while exceeding the budget.
         while (true) {
             DayBucket b = current();
             if ((long) b.used + estimatedTokens > dailyBudgetTokens) return false;
@@ -88,6 +93,14 @@ public class TokenBudgetManager {
 
     public void setPerRequestMax(int tokens) {
         this.perRequestMaxTokens = tokens;
+    }
+
+    public BudgetMode getBudgetMode() {
+        return budgetMode;
+    }
+
+    public void setBudgetMode(BudgetMode mode) {
+        this.budgetMode = mode;
     }
 
     private record DayBucket(LocalDate date, int used) {}

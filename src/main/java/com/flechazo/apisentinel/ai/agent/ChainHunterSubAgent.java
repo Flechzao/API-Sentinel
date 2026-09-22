@@ -34,27 +34,56 @@ public final class ChainHunterSubAgent {
     /** Larger than ExplorationSubAgent's 12 — testing N siblings with real
      *  requests needs more turns than pure reading — but well below
      *  AgentLoop's 50 since this is one focused sub-task, not a full analysis. */
-    private static final int MAX_ITERATIONS = 25;
-    private static final int MAX_TOKENS_PER_TURN = 8192;
+    // P2-3: reduced from 25 to 10 — the audit found a single chain_hunter
+    // call can burn 30-80K tokens (30-70% of the main analysis). 25
+    // iterations is excessive for a sub-agent that's supposed to be a
+    // focused "follow this one chain" task. 10 is enough to trace a
+    // 3-5 hop call chain with retries.
+    private static final int MAX_ITERATIONS = 10;
+    // P2-3: reduced from 8192 to 4096 — sub-agents should produce
+    // concise focused output, not full analysis reports. 4096 is enough
+    // for 3-5 findings with evidence.
+    private static final int MAX_TOKENS_PER_TURN = 4096;
     private static final int THINKING_BUDGET_TOKENS = 3000;
     private static final double TEMPERATURE = 0.3;
-    private static final int TOOL_RESULT_LIMIT = 8000;
+    private static final int TOOL_RESULT_LIMIT = 16000;
     private static final int LLM_CALL_TIMEOUT_SEC = 150;
 
     private ChainHunterSubAgent() {}
 
     public static Result run(LlmProvider provider, AgentToolRegistry registry,
                              String task, LeveledLogger logger) {
+        return run(provider, registry, task, logger, MAX_ITERATIONS, java.util.Set.of());
+    }
+
+    public static Result run(LlmProvider provider, AgentToolRegistry registry,
+                             String task, LeveledLogger logger,
+                             int maxIterations, java.util.Set<String> alreadyTestedPaths) {
+        return run(provider, registry, task, logger, maxIterations, alreadyTestedPaths, null);
+    }
+
+    /** @param modelOverride low-cost model for this cluster-hunting loop (cost
+     *  tiering); null = main model. */
+    public static Result run(LlmProvider provider, AgentToolRegistry registry,
+                             String task, LeveledLogger logger,
+                             int maxIterations, java.util.Set<String> alreadyTestedPaths,
+                             String modelOverride) {
+        int effectiveMax = maxIterations > 0 ? Math.min(maxIterations, 20) : MAX_ITERATIONS;
         List<ChatMessage> messages = new ArrayList<>();
-        messages.add(ChatMessage.system(buildSystemPrompt(task)));
+        String dedupNote = alreadyTestedPaths.isEmpty() ? "" :
+                "\n\n## 已测端点（无需重复测试）\n" + String.join(", ", alreadyTestedPaths);
+        messages.add(ChatMessage.system(buildSystemPrompt(task + dedupNote)));
         messages.add(ChatMessage.user(task));
 
         List<ToolDefinition> toolDefs = registry.getDefinitions();
         List<String> toolsCalled = new ArrayList<>();
 
         try {
-            for (int iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+            for (int iteration = 0; iteration < effectiveMax; iteration++) {
                 LlmRequest request = new LlmRequest(messages, toolDefs, TEMPERATURE, MAX_TOKENS_PER_TURN);
+                if (modelOverride != null && !modelOverride.isBlank()) {
+                    request = request.withModelOverride(modelOverride);
+                }
                 if (provider.supportsExtendedThinking()) {
                     request = request.withThinking(THINKING_BUDGET_TOKENS);
                 }
@@ -99,15 +128,15 @@ public final class ChainHunterSubAgent {
             }
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            return new Result(false, null, MAX_ITERATIONS, toolsCalled, "集群狩猎异常: " + msg);
+            return new Result(false, null, effectiveMax, toolsCalled, "集群狩猎异常: " + msg);
         }
 
         // Hit the iteration cap without a clean text-only finish — return the
         // partial evidence gathered so far rather than a hard failure.
         String partial = lastAssistantText(messages);
-        String summary = "[提示: 已达到集群狩猎轮次上限(" + MAX_ITERATIONS + ")，以下为未完全收尾的部分结论]\n\n"
+        String summary = "[提示: 已达到集群狩猎轮次上限(" + effectiveMax + ")，以下为未完全收尾的部分结论]\n\n"
                 + (partial != null ? partial : "(未能提炼出文本结论，请查看 tools_called 了解已测试的方向)");
-        return new Result(true, summary, MAX_ITERATIONS, toolsCalled, null);
+        return new Result(true, summary, effectiveMax, toolsCalled, null);
     }
 
     private static String lastAssistantText(List<ChatMessage> messages) {
@@ -131,7 +160,8 @@ public final class ChainHunterSubAgent {
                 1. map_sibling_endpoints 获取兄弟端点清单（同 Controller/同资源前缀；写方法标了 priority=high）
                 2. 需要理解兄弟端点实现时用 read_file/grep_repo 快速确认（鉴权检查是否同样缺失）
                 3. 用 send_request 把 A 的攻击模式逐个实测到兄弟端点上（写方法优先）；越权类配合
-                   test_auth_bypass 做会话交换比对；响应拿不准时用 diff_responses 对比基线
+                   test_auth_bypass 做会话交换比对；响应拿不准时用 diff_responses 对比基线；
+                   SSRF 场景下用 generate_oob_probe 生成探针域名、check_oob_results 查回连
                 4. 兄弟端点暴露不同漏洞类时，描述 A+B 串链的可能性并实测关键环节
                 5. 每个端点记录：方法+路径、关键请求、响应差异、结论
 

@@ -40,10 +40,11 @@ public class ToolbarPanel extends JPanel {
     private final JCheckBoxMenuItem businessLogicCb;
     private final JCheckBoxMenuItem organizerAutoSendCb;
     private final JCheckBoxMenuItem auditHighRiskOnlyCb;
-    private final JCheckBoxMenuItem codeExecAutoApproveCb;
+    private final JCheckBoxMenuItem skipAllPermissionsCb;
     private final JCheckBoxMenuItem highlightCb;
     private final JCheckBoxMenuItem autoScanCb;
     private final JCheckBoxMenuItem cascadeHuntCb;
+    private JCheckBoxMenuItem batchParallelCb;
     private final JButton detectMenuBtn;
     private final JPopupMenu detectMenu;
     private final JComboBox<String> aiModeCombo;
@@ -93,7 +94,7 @@ public class ToolbarPanel extends JPanel {
         matchGroup.add(Box.createHorizontalStrut(6));
 
         checkWholeRequestCb = styledCb(I18n.get("check_full"), "checkWholeRequest", onCheckboxChanged);
-        checkWholeRequestCb.setToolTipText("仅模糊匹配模式下生效：在请求体中也搜索 API 关键词");
+        checkWholeRequestCb.setToolTipText(I18n.get("toolbar_whole_req_tip"));
         checkWholeRequestCb.setSelected(initialConfig.isCheckWholeRequest());
         matchGroup.add(checkWholeRequestCb);
 
@@ -116,68 +117,78 @@ public class ToolbarPanel extends JPanel {
         detectMenu.add(unauthorizedCheckCb);
 
         oobCheckCb = styledMenuItem(I18n.get("oob_probe"), "oobEnabled", onCheckboxChanged);
-        oobCheckCb.setToolTipText("启用 OOB 盲 SSRF 探针（回连平台需在 设置 → 回连平台 中配置）");
+        oobCheckCb.setToolTipText("Enable OOB blind SSRF probes (callback platform must be configured in Settings → OOB)");
         oobCheckCb.setSelected(initialConfig.isOobEnabled());
         detectMenu.add(oobCheckCb);
 
         wafCheckCb = styledMenuItem(I18n.get("waf_detect"), "wafDetection", onCheckboxChanged);
-        wafCheckCb.setToolTipText("识别 payload 响应中的 WAF 拦截页（被动指纹，不发额外请求）。"
-                + "被拦截的 payload 将标记 🛡 并不作为漏洞/安全证据；拦截时自动用编码变体重试。");
+        wafCheckCb.setToolTipText("Identify WAF block pages in payload responses (passive fingerprint, no extra requests). Blocked payloads are marked 🛡 and not used as vuln/safe evidence; auto-retry with encoding variants.");
         wafCheckCb.setSelected(initialConfig.isWafDetectionEnabled());
         detectMenu.add(wafCheckCb);
 
         activeProbeCb = styledMenuItem(I18n.get("active_probe"), "activeProbe", onCheckboxChanged);
-        activeProbeCb.setToolTipText("程序化主动探针：CORS Origin 变体反射、JWT alg:none 伪造重放、"
-                + "CRLF canary、NoSQL 差分/时序（按触发条件发送，每接口 ≤17 个额外请求）。");
+        activeProbeCb.setToolTipText("Programmatic active probes: CORS Origin variant reflection, JWT alg:none forgery replay, CRLF canary, NoSQL diff/timing (triggered conditionally, ≤17 extra requests per API).");
         activeProbeCb.setSelected(initialConfig.isActiveProbeEnabled());
         detectMenu.add(activeProbeCb);
 
         businessLogicCb = styledMenuItem(I18n.get("business_logic"), "businessLogic", onCheckboxChanged);
-        businessLogicCb.setToolTipText("业务逻辑程序化验证（价格篡改/优惠券重放/负数攻击/步骤跳过）。"
-                + "⚠ 真实业务操作，仅对授权测试环境开启。");
+        businessLogicCb.setToolTipText("Business logic programmatic verification (price tamper/coupon replay/negative attack/step skip). ⚠ Real business operations, enable only for authorized test environments.");
         businessLogicCb.setSelected(initialConfig.isBusinessLogicVerificationEnabled());
         detectMenu.add(businessLogicCb);
 
+        // ── 显示 ──
+        detectMenu.addSeparator();
+
         highlightCb = styledMenuItem(I18n.get("highlight"), "highlightEnabled", onCheckboxChanged);
-        highlightCb.setToolTipText("关闭后不在 Proxy History 标记颜色（已测老接口不再红/绿干扰）");
+        highlightCb.setToolTipText("When off, no color marking in Proxy History (tested APIs no longer show red/green)");
         highlightCb.setSelected(initialConfig.isHighlightEnabled());
         detectMenu.add(highlightCb);
 
+        // ── 自动化 ──
+        detectMenu.addSeparator();
+
         autoScanCb = styledMenuItem(I18n.get("auto_scan"), "autoScan", onCheckboxChanged);
-        autoScanCb.setToolTipText("开启后后台自动对所有匹配到的流量跑综合分析（持续消耗 LLM 调用）。"
-                + "独立于下方 Pipeline/Agent 下拉框——那个只影响你手动点\"AI 分析\"时走哪条分析路径。");
+        autoScanCb.setToolTipText("When on, automatically runs comprehensive analysis on all matched traffic (continuously consumes LLM calls). Independent of the Pipeline/Agent dropdown — that only affects which analysis path runs when you manually click AI Analyze.");
         autoScanCb.setSelected(initialConfig.isAutoScanEnabled());
         detectMenu.add(autoScanCb);
 
         cascadeHuntCb = styledMenuItem(I18n.get("cascade_hunt"), "cascadeHunt", onCheckboxChanged);
-        cascadeHuntCb.setToolTipText("独立开关（不依赖自动模式）：任何分析确认漏洞后，自动对兄弟路由（同控制器/同资源前缀）扩散分析。"
-                + "需已索引代码仓库；级联有预算上限与熔断保护，且从不发送真实请求。");
+        cascadeHuntCb.setToolTipText("Independent toggle (not dependent on auto mode): after any analysis confirms a vuln, automatically cascades to sibling routes (same controller/resource prefix). Requires indexed code repo; cascade has budget limits and circuit-breaking, never sends real requests.");
         cascadeHuntCb.setSelected(initialConfig.isCascadeHuntEnabled());
         detectMenu.add(cascadeHuntCb);
 
         organizerAutoSendCb = styledMenuItem(I18n.get("organizer_auto_send"), "organizerAutoSend", onCheckboxChanged);
-        organizerAutoSendCb.setToolTipText("分析发现漏洞后，自动把证据请求/响应存入 Burp 原生 Organizer，便于复查。"
-                + "也可在 API 表格右键手动\"发送到 Organizer\"。");
+        organizerAutoSendCb.setToolTipText("After analysis finds a vuln, auto-sends evidence to Burp native Organizer. Can also right-click in API table to send to Organizer.");
         organizerAutoSendCb.setSelected(initialConfig.isOrganizerAutoSendEnabled());
         detectMenu.add(organizerAutoSendCb);
 
         auditHighRiskOnlyCb = styledMenuItem(I18n.get("audit_high_risk_only"), "auditHighRiskOnly", onCheckboxChanged);
-        auditHighRiskOnlyCb.setToolTipText("开启后 audit_codebase 全局审计只返回高危 sink（命令执行/SQL/反序列化），省 token。"
-                + "默认关闭＝审计全部 sink（发现漏洞比省 token 更值）。");
+        auditHighRiskOnlyCb.setToolTipText("When on, audit_codebase global audit only returns high-risk sinks (command/SQL/deserialization), saving tokens. Default off = audit all sinks (finding vulns is worth more than saving tokens).");
         auditHighRiskOnlyCb.setSelected(initialConfig.isAuditHighRiskOnly());
         detectMenu.add(auditHighRiskOnlyCb);
 
-        codeExecAutoApproveCb = styledMenuItem(I18n.get("code_exec_auto_approve"), "codeExecAutoApprove", onCheckboxChanged);
-        codeExecAutoApproveCb.setToolTipText("开启后 run_sandboxed_code 工具跳过每次执行前的人工确认弹窗，自动运行 Agent"
-                + "生成的脚本。沙箱不能保证隔离网络/真实文件系统访问，跳过确认意味着把这个安全边界完全让渡给模型，"
-                + "存在被响应内容注入误导执行恶意代码的风险，请自行评估后再开启。默认关闭＝每次弹窗确认。");
-        codeExecAutoApproveCb.setSelected(initialConfig.isCodeExecutionAutoApprove());
-        detectMenu.add(codeExecAutoApproveCb);
+        // ── 批量 ──
+        detectMenu.addSeparator();
+
+        batchParallelCb = styledMenuItem("Parallel Batch (4 concurrent)", "batchConcurrent", onCheckboxChanged);
+        batchParallelCb.setToolTipText(
+                "When checked, batch analysis runs up to 4 APIs concurrently (fast but more tokens). Unchecked = sequential (one at a time, cheaper but slower).");
+        batchParallelCb.setSelected(initialConfig.isBatchConcurrent());
+        detectMenu.add(batchParallelCb);
+
+        // ── 权限 ──
+        detectMenu.addSeparator();
+
+        skipAllPermissionsCb = styledMenuItem("Skip All Permission Prompts (use with caution)", "skipAllPermissions", onCheckboxChanged);
+        skipAllPermissionsCb.setToolTipText(
+                "⚠ Dangerous: when enabled, Agent auto-executes all operations (code execution, browser, user interaction) without confirmation. Equivalent to --dangerously-skip-permissions. Use only in fully trusted test environments.");
+        skipAllPermissionsCb.setSelected(initialConfig.isSkipAllPermissions());
+        detectMenu.add(skipAllPermissionsCb);
 
         detectMenuBtn = new JButton();
         detectMenuBtn.setFont(CTRL_FONT);
         detectMenuBtn.setFocusPainted(false);
-        detectMenuBtn.setToolTipText("检测选项：敏感/越权/OOB/WAF/主动探针/业务逻辑/高亮/自动扫描");
+        detectMenuBtn.setToolTipText("Detection options: sensitive/authz/OOB/WAF/active probe/business logic/highlight/auto scan");
         detectMenuBtn.addActionListener(e ->
                 detectMenu.show(detectMenuBtn, 0, detectMenuBtn.getHeight()));
         updateDetectBtnLabel();
@@ -197,11 +208,11 @@ public class ToolbarPanel extends JPanel {
         aiModeCombo = new JComboBox<>(new String[]{"Pipeline", "Agent"});
         // Default to Agent — it is the more capable autonomous path; Pipeline
         // stays available from the dropdown for the fixed 6-stage flow.
-        aiModeCombo.setSelectedIndex(1);
+        aiModeCombo.setSelectedIndex(initialConfig.isAgentMode() ? 1 : 0);
         aiModeCombo.setFont(CTRL_FONT);
         aiModeCombo.setPreferredSize(new Dimension(95, 22));
         aiModeCombo.setMaximumSize(new Dimension(95, 22));
-        aiModeCombo.setToolTipText("Pipeline: 固定6阶段分析流程 | Agent: AI自主决策分析工具调用");
+        aiModeCombo.setToolTipText(I18n.get("toolbar_ai_mode_tip"));
         aiModeCombo.addActionListener(e -> {
             onCheckboxChanged.accept("agentMode");
             if (onAiModeChanged != null) onAiModeChanged.accept(isAgentMode());
@@ -282,7 +293,7 @@ public class ToolbarPanel extends JPanel {
         for (JCheckBoxMenuItem mi : new JCheckBoxMenuItem[]{
                 sensitiveCheckCb, unauthorizedCheckCb, oobCheckCb, wafCheckCb,
                 activeProbeCb, businessLogicCb, highlightCb, autoScanCb, cascadeHuntCb,
-                organizerAutoSendCb, auditHighRiskOnlyCb, codeExecAutoApproveCb}) {
+                organizerAutoSendCb, auditHighRiskOnlyCb, skipAllPermissionsCb}) {
             if (mi != null && mi.isSelected()) on++;
         }
         detectMenuBtn.setText(I18n.get("detect_options") + " ⚙ (" + on + ")");
@@ -298,10 +309,11 @@ public class ToolbarPanel extends JPanel {
     public boolean isBusinessLogic()        { return businessLogicCb.isSelected(); }
     public boolean isOrganizerAutoSend()    { return organizerAutoSendCb.isSelected(); }
     public boolean isAuditHighRiskOnly()    { return auditHighRiskOnlyCb.isSelected(); }
-    public boolean isCodeExecAutoApprove()  { return codeExecAutoApproveCb.isSelected(); }
+    public boolean isSkipAllPermissions() { return skipAllPermissionsCb.isSelected(); }
     public boolean isHighlightEnabled()     { return highlightCb.isSelected(); }
     public boolean isAutoScanEnabled()      { return autoScanCb.isSelected(); }
     public boolean isCascadeHuntEnabled()   { return cascadeHuntCb != null && cascadeHuntCb.isSelected(); }
+    public boolean isBatchParallel()        { return batchParallelCb != null && batchParallelCb.isSelected(); }
     public boolean isAgentMode()            { return aiModeCombo.getSelectedIndex() == 1; }
 
     /** Notified with the new isAgentMode() value whenever the Pipeline/Agent
@@ -316,6 +328,16 @@ public class ToolbarPanel extends JPanel {
             return MATCH_MODES[idx];
         }
         return MatchMode.EXACT;
+    }
+
+    /** Show the detection settings popup menu below the detection button. */
+    public void showDetectionMenu() {
+        detectMenu.show(detectMenuBtn, 0, detectMenuBtn.getHeight());
+    }
+
+    /** Toggle between Agent and Pipeline mode. */
+    public void toggleAgentMode() {
+        aiModeCombo.setSelectedIndex(aiModeCombo.getSelectedIndex() == 0 ? 1 : 0);
     }
 
     /** Programmatically select the match-mode combo (fires the change callback). */
@@ -339,7 +361,6 @@ public class ToolbarPanel extends JPanel {
         highlightCb.setText(I18n.get("highlight"));
         autoScanCb.setText(I18n.get("auto_scan"));
         cascadeHuntCb.setText(I18n.get("cascade_hunt"));
-        codeExecAutoApproveCb.setText(I18n.get("code_exec_auto_approve"));
 
         // Group prefix labels
         if (matchGroupLabel != null) matchGroupLabel.setText(I18n.get("match_mode").replace(":", ""));

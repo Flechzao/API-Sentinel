@@ -17,6 +17,8 @@ import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.regex.Pattern;
@@ -47,11 +49,17 @@ public class ApiTablePanel extends JPanel {
 
     private IntConsumer onAnalyzeRow;
     private IntConsumer onAiChat;
+    /** Multi-endpoint joint analysis: triggered when 2+ rows selected. */
+    private Consumer<int[]> onJointAnalyze;
     private Consumer<int[]> onDeleteRows;
+    private Runnable onImportAction;
+    private Consumer<String> onSetupAction;
+    private JPanel centerCard;
     private Consumer<int[]> onMarkSafe;
     private Consumer<int[]> onViewTraffic;
     private IntConsumer onViewFindings;
     private IntConsumer onViewPassive;
+    private IntConsumer onToggleStatus;
     private Consumer<int[]> onSendToOrganizer;
 
     public ApiTablePanel(ApiEntryTableModel tableModel, BurpTheme theme) {
@@ -179,7 +187,7 @@ public class ApiTablePanel extends JPanel {
             }
         });
         // Risk column: combo-box editor for manual override
-        JComboBox<String> riskCombo = new JComboBox<>(new String[]{"自动", "HIGH", "MEDIUM", "LOW", "SAFE"});
+        JComboBox<String> riskCombo = new JComboBox<>(new String[]{I18n.get("table_risk_auto"), "HIGH", "MEDIUM", "LOW", "SAFE"});
         riskCombo.setFont(SANS_PLAIN_11);
         riskCombo.setRenderer(new DefaultListCellRenderer() {
             @Override
@@ -194,7 +202,7 @@ public class ApiTablePanel extends JPanel {
                     case "MEDIUM" -> "◆ MEDIUM";
                     case "LOW" -> "● LOW";
                     case "SAFE" -> "✓ SAFE";
-                    default -> "○ 自动";
+                    default -> "○ " + I18n.get("table_risk_auto");
                 });
                 if (!isSelected) {
                     setForeground(switch (risk) {
@@ -247,7 +255,7 @@ public class ApiTablePanel extends JPanel {
                 int modelRow = t.convertRowIndexToModel(row);
                 ApiEntry entryForTip = tableModel.getEntryAt(modelRow);
                 String tip = entryForTip != null ? entryForTip.getDisplayFindingsTooltip() : null;
-                area.setToolTipText(tip != null ? tip : "确认/疑似");
+                area.setToolTipText(tip != null ? tip : I18n.get("table_confirm_suspect"));
                 return area;
             }
         });
@@ -293,26 +301,25 @@ public class ApiTablePanel extends JPanel {
                     if (analyzing) {
                         setForeground(theme.accentBg());
                     } else {
-                        switch (status) {
-                            case "未测试"      -> setForeground(theme.mutedText());
-                            case "接口测试中"   -> setForeground(theme.statusPending());
-                            case "测试通过，安全" -> setForeground(theme.statusOk());
-                            case "存在漏洞"     -> setForeground(theme.statusError());
-                            default            -> setForeground(t.getForeground());
-                        }
+                        // Compare against I18n display names (dynamic on language)
+                        if (status.equals(ApiStatus.UNTESTED.getDisplayName())) setForeground(theme.mutedText());
+                        else if (status.equals(ApiStatus.UNDER_TEST.getDisplayName())) setForeground(theme.statusPending());
+                        else if (status.equals(ApiStatus.PASSED.getDisplayName())) setForeground(theme.statusOk());
+                        else if (status.equals(ApiStatus.VULNERABLE.getDisplayName())) setForeground(theme.statusError());
+                        else setForeground(t.getForeground());
                     }
                 }
                 if (analyzing) {
-                    setText("⚙ 分析中…");
+                    setText("⚙ " + com.flechazo.apisentinel.ui.I18n.get("status_analyzing"));
                 } else {
-                    setText(switch (status) {
-                        case "未测试"         -> "○ 未测试";
-                        case "接口测试中"      -> "◐ 测试中";
-                        case "待评估"          -> "◈ 待评估";
-                        case "测试通过，安全"   -> "● 已通过";
-                        case "存在漏洞"        -> "✖ 漏洞";
-                        default              -> status;
-                    });
+                    // Build display text with I18n display names
+                    String text = status;
+                    if (status.equals(ApiStatus.UNTESTED.getDisplayName())) text = "○ " + status;
+                    else if (status.equals(ApiStatus.UNDER_TEST.getDisplayName())) text = "◐ " + status;
+                    else if (status.equals(ApiStatus.PENDING_REVIEW.getDisplayName())) text = "◈ " + status;
+                    else if (status.equals(ApiStatus.PASSED.getDisplayName())) text = "● " + status;
+                    else if (status.equals(ApiStatus.VULNERABLE.getDisplayName())) text = "✖ " + status;
+                    setText(text);
                 }
                 return this;
             }
@@ -329,22 +336,24 @@ public class ApiTablePanel extends JPanel {
                 setFont(SANS_PLAIN_11);
                 setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
                 String status = value != null ? value.toString() : "";
-                setText(switch (status) {
-                    case "未测试" -> "○ 未测试";
-                    case "接口测试中" -> "◐ 测试中";
-                    case "待评估" -> "◈ 待评估";
-                    case "测试通过，安全" -> "● 已通过";
-                    case "存在漏洞" -> "✖ 漏洞";
-                    default -> status;
-                });
+                ApiStatus st = ApiStatus.fromDisplayName(status);
+                String text = status;
+                if (st != null) {
+                    text = switch (st) {
+                        case UNTESTED -> "○ " + ApiStatus.UNTESTED.getDisplayName();
+                        case UNDER_TEST -> "◐ " + ApiStatus.UNDER_TEST.getDisplayName();
+                        case PENDING_REVIEW -> "◈ " + ApiStatus.PENDING_REVIEW.getDisplayName();
+                        case PASSED -> "● " + ApiStatus.PASSED.getDisplayName();
+                        case VULNERABLE -> "✖ " + ApiStatus.VULNERABLE.getDisplayName();
+                    };
+                }
+                setText(text);
                 if (!isSelected) {
-                    setForeground(switch (status) {
-                        case "未测试" -> theme.mutedText();
-                        case "接口测试中" -> theme.statusPending();
-                        case "测试通过，安全" -> theme.statusOk();
-                        case "存在漏洞" -> theme.statusError();
-                        default -> theme.headerFg();
-                    });
+                    if (st == ApiStatus.UNTESTED) setForeground(theme.mutedText());
+                    else if (st == ApiStatus.UNDER_TEST) setForeground(theme.statusPending());
+                    else if (st == ApiStatus.PASSED) setForeground(theme.statusOk());
+                    else if (st == ApiStatus.VULNERABLE) setForeground(theme.statusError());
+                    else setForeground(theme.headerFg());
                 }
                 return this;
             }
@@ -360,7 +369,7 @@ public class ApiTablePanel extends JPanel {
                 if (!s && v != null) {
                     setForeground("✓".equals(v.toString()) ? theme.riskSafe() : theme.mutedText());
                 }
-                setToolTipText("是否已捕获真实流量");
+                setToolTipText(I18n.get("table_traffic_tooltip"));
                 return this;
             }
         });
@@ -423,6 +432,11 @@ public class ApiTablePanel extends JPanel {
                     if (onViewPassive != null) onViewPassive.accept(table.convertRowIndexToModel(viewRow));
                     return;
                 }
+                if (modelCol == COL_STATE) {
+                    // Double-click status column → cycle status (replaces right-click menu item)
+                    if (onToggleStatus != null) onToggleStatus.accept(table.convertRowIndexToModel(viewRow));
+                    return;
+                }
                 if (onViewFindings == null) return;
                 if (modelCol != COL_FINDINGS && modelCol != COL_RISK) return;
                 onViewFindings.accept(table.convertRowIndexToModel(viewRow));
@@ -479,6 +493,15 @@ public class ApiTablePanel extends JPanel {
             @Override public void actionPerformed(ActionEvent e) { table.selectAll(); }
         });
 
+        // Ctrl/Cmd+Shift+D → batch set domain
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_D, metaKey | java.awt.event.InputEvent.SHIFT_DOWN_MASK), "batchDomain");
+        am.put("batchDomain", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) {
+                int[] selected = table.getSelectedRows();
+                if (selected.length >= 2) batchSetDomain(selected);
+            }
+        });
+
         // ====================================================================
         // Bottom: row count label
         // ====================================================================
@@ -494,27 +517,47 @@ public class ApiTablePanel extends JPanel {
             if (!e.getValueIsAdjusting()) updateRowCount();
         });
 
-        add(new JScrollPane(table), BorderLayout.CENTER);
-        add(rowCountLabel, BorderLayout.SOUTH);
+        // CardLayout to toggle between the data table and an empty-state
+        // view — premium apps never show a blank table.
+        JPanel centerCard = new JPanel(new CardLayout());
+        centerCard.add(new JScrollPane(table), "table");
+        centerCard.add(new EmptyStateView(theme), "empty");
+        add(centerCard, BorderLayout.CENTER);
+        this.centerCard = centerCard;
+
+        // rowCountLabel removed — "共 0 条" in the bottom-left corner
+        // is visual noise on the empty state and adds no value when populated
+        // (the table's own row count is visible).
+
+        // Toggle empty state visibility when data changes
+        tableModel.addTableModelListener(e -> toggleEmptyState());
+        toggleEmptyState();
 
         updateRowCount();
-    }
 
-    // ====================================================================
-    // Right-click context menu builder (native style)
-    // ====================================================================
+        // Refresh column headers + repaint when language is toggled
+        I18n.addLangListener(lang -> javax.swing.SwingUtilities.invokeLater(() -> {
+            // Update each column header value directly (avoids fireTableStructureChanged
+            // which resets column widths and renderers)
+            for (int i = 0; i < table.getColumnCount(); i++) {
+                table.getColumnModel().getColumn(i).setHeaderValue(tableModel.getColumnName(i));
+            }
+            table.getTableHeader().repaint();
+            updateRowCount();
+        }));
+    }
     private JPopupMenu buildPopupMenu() {
         JPopupMenu menu = new JPopupMenu();
         int[] selected = getSelectedRows();
         int count = selected.length;
         String suffix = count > 1 ? "  (" + count + ")" : "";
 
-        JMenuItem selectAllItem = new JMenuItem("全选可见行  (" + table.getRowCount() + ")");
+        JMenuItem selectAllItem = new JMenuItem(I18n.get("table_select_all") + table.getRowCount() + ")");
         selectAllItem.addActionListener(e -> table.selectAll());
         menu.add(selectAllItem);
         menu.addSeparator();
 
-        JMenuItem analyzeItem = new JMenuItem("AI 分析" + suffix);
+        JMenuItem analyzeItem = new JMenuItem(I18n.get("table_ai_analyze_suffix") + suffix);
         analyzeItem.addActionListener(e -> {
             if (onAnalyzeRow != null) {
                 for (int row : selected) onAnalyzeRow.accept(row);
@@ -522,34 +565,46 @@ public class ApiTablePanel extends JPanel {
         });
         menu.add(analyzeItem);
 
-        JMenuItem aiChatItem = new JMenuItem("AI 对话分析");
+        // Multi-endpoint joint analysis — only shown when 2+ rows selected
+        if (count >= 2) {
+            JMenuItem jointItem = new JMenuItem(I18n.get("table_joint_analyze") + count + I18n.get("table_joint_suffix"));
+            jointItem.setToolTipText(I18n.get("table_joint_tooltip"));
+            jointItem.addActionListener(e -> {
+                if (onJointAnalyze != null) {
+                    onJointAnalyze.accept(selected);
+                }
+            });
+            menu.add(jointItem);
+        }
+
+        JMenuItem aiChatItem = new JMenuItem(I18n.get("table_ai_chat"));
         aiChatItem.setEnabled(count == 1);
         aiChatItem.addActionListener(e -> {
             if (onAiChat != null && count == 1) onAiChat.accept(selected[0]);
         });
         menu.add(aiChatItem);
 
-        JMenuItem trafficItem = new JMenuItem("查看历史流量");
+        JMenuItem trafficItem = new JMenuItem(I18n.get("table_view_traffic"));
         trafficItem.addActionListener(e -> {
             if (onViewTraffic != null) onViewTraffic.accept(selected);
         });
         menu.add(trafficItem);
 
-        JMenuItem findingsItem = new JMenuItem("查看发现详情");
+        JMenuItem findingsItem = new JMenuItem(I18n.get("table_view_findings"));
         findingsItem.setEnabled(count == 1);
         findingsItem.addActionListener(e -> {
             if (onViewFindings != null && count == 1) onViewFindings.accept(selected[0]);
         });
         menu.add(findingsItem);
 
-        JMenuItem passiveItem = new JMenuItem("查看被动检测详情");
+        JMenuItem passiveItem = new JMenuItem(I18n.get("table_view_passive"));
         passiveItem.setEnabled(count == 1);
         passiveItem.addActionListener(e -> {
             if (onViewPassive != null && count == 1) onViewPassive.accept(selected[0]);
         });
         menu.add(passiveItem);
 
-        JMenuItem organizerItem = new JMenuItem("发送到 Organizer" + suffix);
+        JMenuItem organizerItem = new JMenuItem(I18n.get("table_send_organizer") + suffix);
         organizerItem.addActionListener(e -> {
             if (onSendToOrganizer != null) onSendToOrganizer.accept(selected);
         });
@@ -557,21 +612,30 @@ public class ApiTablePanel extends JPanel {
 
         menu.addSeparator();
 
-        JMenuItem copyItem = new JMenuItem("复制 API 路径" + suffix);
+        JMenuItem copyItem = new JMenuItem(I18n.get("table_copy_path") + suffix);
         int metaMask = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
         copyItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_C, metaMask));
         copyItem.addActionListener(e -> copySelectedPaths());
         menu.add(copyItem);
 
-        JMenuItem safeItem = new JMenuItem("标记为安全" + suffix);
+        JMenuItem safeItem = new JMenuItem(I18n.get("table_mark_safe") + suffix);
         safeItem.addActionListener(e -> {
             if (onMarkSafe != null) onMarkSafe.accept(selected);
         });
         menu.add(safeItem);
 
+        if (count >= 2) {
+            JMenuItem batchDomainItem = new JMenuItem(I18n.get("table_batch_set_domain") + suffix);
+            batchDomainItem.setToolTipText(I18n.get("table_batch_set_domain_tip"));
+            batchDomainItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_D,
+                    Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx() | java.awt.event.InputEvent.SHIFT_DOWN_MASK));
+            batchDomainItem.addActionListener(e -> batchSetDomain(selected));
+            menu.add(batchDomainItem);
+        }
+
         menu.addSeparator();
 
-        JMenuItem deleteItem = new JMenuItem("删除" + suffix);
+        JMenuItem deleteItem = new JMenuItem(I18n.get("table_delete") + suffix);
         deleteItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0));
         deleteItem.addActionListener(e -> {
             if (onDeleteRows != null) onDeleteRows.accept(selected);
@@ -600,6 +664,55 @@ public class ApiTablePanel extends JPanel {
     }
 
     // ====================================================================
+    // Empty state toggle
+    // ====================================================================
+    private void toggleEmptyState() {
+        if (centerCard == null) return;
+        CardLayout cl = (CardLayout) centerCard.getLayout();
+        cl.show(centerCard, tableModel.getRowCount() == 0 ? "empty" : "table");
+    }
+
+    public void setOnImportAction(Runnable action) {
+        this.onImportAction = action;
+    }
+
+    public void setOnSetupAction(Consumer<String> action) {
+        this.onSetupAction = action;
+        // Wire into the empty state view if it exists
+        for (Component c : centerCard.getComponents()) {
+            if (c instanceof EmptyStateView esv) {
+                esv.setSetupActionHandler(action);
+            }
+        }
+    }
+
+    /** Push setup status to the empty state view (called from ApiSentinelTab
+     *  when config changes). */
+    public void setSetupStatus(EmptyStateView.SetupStatus status) {
+        boolean found = false;
+        for (Component c : centerCard.getComponents()) {
+            if (c instanceof EmptyStateView esv) {
+                esv.setStatus(status);
+                found = true;
+            }
+        }
+        if (!found) {
+            // EmptyStateView not found as direct child — try nested
+            for (Component c : centerCard.getComponents()) {
+                if (c instanceof java.awt.Container cont) {
+                    for (Component inner : cont.getComponents()) {
+                        if (inner instanceof EmptyStateView esv) {
+                            esv.setStatus(status);
+                            found = true;
+                        }
+                    }
+                }
+            }
+        }
+        System.out.println("[I18n] setSetupStatus called, found=" + found + ", components=" + centerCard.getComponentCount());
+    }
+
+    // ====================================================================
     // Row count indicator
     // ====================================================================
     private void updateRowCount() {
@@ -609,12 +722,12 @@ public class ApiTablePanel extends JPanel {
 
         StringBuilder sb = new StringBuilder();
         if (visibleView < totalModel) {
-            sb.append(String.format("显示 %d / %d 条", visibleView, totalModel));
+            sb.append(String.format(I18n.get("table_showing"), visibleView, totalModel));
         } else {
-            sb.append(String.format("共 %d 条", totalModel));
+            sb.append(String.format(I18n.get("table_total"), totalModel));
         }
         if (selectedCount > 0) {
-            sb.append(String.format("  |  已选 %d 条", selectedCount));
+            sb.append(String.format(I18n.get("table_selected"), selectedCount));
         }
         rowCountLabel.setText(sb.toString());
     }
@@ -642,11 +755,13 @@ public class ApiTablePanel extends JPanel {
     // === Callback setters ===
     public void setOnAnalyzeRow(IntConsumer callback) { this.onAnalyzeRow = callback; }
     public void setOnAiChat(IntConsumer callback) { this.onAiChat = callback; }
+    public void setOnJointAnalyze(Consumer<int[]> callback) { this.onJointAnalyze = callback; }
     public void setOnDeleteRows(Consumer<int[]> callback) { this.onDeleteRows = callback; }
     public void setOnMarkSafe(Consumer<int[]> callback) { this.onMarkSafe = callback; }
     public void setOnViewTraffic(Consumer<int[]> callback) { this.onViewTraffic = callback; }
     public void setOnViewFindings(IntConsumer callback) { this.onViewFindings = callback; }
     public void setOnViewPassive(IntConsumer callback) { this.onViewPassive = callback; }
+    public void setOnToggleStatus(IntConsumer callback) { this.onToggleStatus = callback; }
     public void setOnSendToOrganizer(Consumer<int[]> callback) { this.onSendToOrganizer = callback; }
 
     public JTable getTable() { return table; }
@@ -699,6 +814,48 @@ public class ApiTablePanel extends JPanel {
             setBackground(isSelected ? table.getSelectionBackground() : UIManager.getColor("Button.background"));
             return this;
         }
+    }
+
+    // --- Batch set domain ---
+    /**
+     * Batch set domain for selected rows. Captures ApiEntry references
+     * BEFORE showing the input dialog, so the row data is stable even if
+     * fireTableDataChanged() was called between popup creation and menu
+     * item click (which could shift view-model index mappings).
+     *
+     * <p>Pre-rework this used {@code table.convertRowIndexToModel(viewRow)}
+     * inside the loop, which could return stale/wrong model indices after
+     * the first batch operation triggered {@code fireTableDataChanged()}
+     * and the sorter re-sorted. The second batch of 30 rows would then
+     * map to wrong entries or return null.
+     */
+    private void batchSetDomain(int[] selectedRows) {
+        // Capture entry references BEFORE the dialog (stable snapshot)
+        List<ApiEntry> entries = new ArrayList<>();
+        for (int viewRow : selectedRows) {
+            int modelRow = table.convertRowIndexToModel(viewRow);
+            ApiEntry entry = tableModel.getEntryAt(modelRow);
+            if (entry != null) entries.add(entry);
+        }
+        if (entries.isEmpty()) return;
+
+        String domain = JOptionPane.showInputDialog(this,
+                I18n.get("table_batch_set_domain_prompt"),
+                I18n.get("table_batch_set_domain_title"),
+                JOptionPane.PLAIN_MESSAGE);
+        if (domain == null) return;
+        domain = domain.trim().toLowerCase();
+
+        var repository = tableModel.getRepository();
+        int updated = 0;
+        for (ApiEntry entry : entries) {
+            repository.updateDomain(entry, domain);
+            updated++;
+        }
+        tableModel.refreshFromRepositorySync();
+        ToastNotification.show(this,
+                String.format("已为 %d 个接口设置域名: %s", updated, domain.isEmpty() ? "(空)" : domain),
+                ToastNotification.ToastType.SUCCESS, 3000);
     }
 
     // --- Button column editor ---

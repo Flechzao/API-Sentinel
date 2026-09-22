@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "MCP 会话化工具调用流程",
+    "locale": "zh-CN",
+    "views": [
+      { "id": "session-setup", "label": "会话建立", "focus": ["ext_ai", "mcp_server", "session", "registry"], "note": "外部 AI 客户端连接 MCP Server，建立会话" },
+      { "id": "tool-execution", "label": "工具执行", "focus": ["session", "registry", "tool", "target", "evidence"], "note": "会话内执行工具，结果写入证据存储" },
+      { "id": "writeback", "label": "统一写回", "focus": ["evidence", "verdict", "repo", "ui_table"], "note": "所有结果统一写回主干，UI 自动刷新" }
+    ]
+  },
+  "lanes": [
+    { "id": "client", "label": "外部 AI 客户端" },
+    { "id": "mcp", "label": "MCP Server" },
+    { "id": "tools", "label": "工具执行层" },
+    { "id": "storage", "label": "数据存储" }
+  ],
+  "phases": [
+    { "id": "connect", "label": "连接", "fromCol": 0, "toCol": 1 },
+    { "id": "execute", "label": "执行", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "persist", "label": "持久化", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "session_mgmt", "label": "会话管理", "lane": "mcp", "fromCol": 0, "toCol": 2, "variant": "emphasis" },
+    { "id": "tool_work", "label": "工具调用", "lane": "tools", "fromCol": 2, "toCol": 3, "variant": "dashed" },
+    { "id": "writeback_path", "label": "写回主干", "lane": "storage", "fromCol": 3, "toCol": 5, "variant": "emphasis" }
+  ],
+  "mainPath": ["ext_ai", "mcp_server", "session", "tool", "auth_gate", "target"],
+  "nodes": [
+    { "id": "ext_ai", "lane": "client", "col": 0, "type": "external", "label": "Claude Code", "sublabel": "外部大脑", "width": 140 },
+    { "id": "mcp_server", "lane": "mcp", "col": 1, "type": "security", "label": "McpServer", "sublabel": "鉴权 · 路由", "tag": "loopback+token", "width": 140 },
+    { "id": "session", "lane": "mcp", "col": 2, "type": "backend", "label": "McpSession", "sublabel": "ToolContext", "tag": "独占实例", "width": 140 },
+    { "id": "registry", "lane": "tools", "col": 2, "type": "frontend", "label": "ToolRegistry", "sublabel": "50+ 工具", "width": 140 },
+    { "id": "tool", "lane": "tools", "col": 3, "type": "messagebus", "label": "AgentTool", "sublabel": "execute()", "width": 140 },
+    { "id": "target", "lane": "tools", "col": 4, "type": "cloud", "label": "目标 API", "sublabel": "send_request", "width": 140 },
+    { "id": "evidence", "lane": "storage", "col": 3, "type": "database", "label": "EvidenceStore", "sublabel": "证据链", "width": 140 },
+    { "id": "verdict", "lane": "storage", "col": 4, "type": "security", "label": "Verdict", "sublabel": "仲裁落库", "tag": "证据秤", "width": 140 },
+    { "id": "repo", "lane": "storage", "col": 5, "type": "database", "label": "ApiRepository", "sublabel": "fireChange()", "width": 140 },
+    { "id": "ui_table", "lane": "client", "col": 5, "type": "frontend", "label": "API 表格", "sublabel": "自动刷新", "width": 140 },
+    { "id": "auth_gate", "lane": "mcp", "col": 3, "type": "security", "label": "权限检查", "sublabel": "activeTools?", "tag": "mcpAllowActiveTools", "width": 140 },
+    { "id": "blocked", "lane": "mcp", "col": 4, "type": "security", "label": "拒绝", "sublabel": "仅只读工具", "width": 140 }
+  ],
+  "edges": [
+    { "id": "connect", "from": "ext_ai", "to": "mcp_server", "label": "MCP 协议", "variant": "emphasis" },
+    { "id": "create-session", "from": "mcp_server", "to": "session", "label": "创建会话", "variant": "default" },
+    { "id": "build-registry", "from": "session", "to": "registry", "label": "StandardToolRegistry", "variant": "default" },
+
+    { "id": "tool-call", "from": "session", "to": "tool", "label": "tools/call", "variant": "emphasis" },
+    { "id": "auth-check", "from": "tool", "to": "auth_gate", "label": "主动工具?", "variant": "security" },
+    { "id": "approved", "from": "auth_gate", "to": "target", "label": "允许", "variant": "emphasis" },
+    { "id": "denied", "from": "auth_gate", "to": "blocked", "label": "拒绝", "variant": "security", "role": "error" },
+    { "id": "collect-evidence", "from": "tool", "to": "evidence", "label": "记录证据", "variant": "default" },
+    { "id": "write-verdict", "from": "evidence", "to": "verdict", "label": "validate_findings", "variant": "default" },
+    { "id": "persist-repo", "from": "verdict", "to": "repo", "label": "persist=true", "variant": "emphasis" },
+    { "id": "fire-change", "from": "repo", "to": "ui_table", "label": "fireChange()", "variant": "emphasis", "role": "return" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "会话隔离", "items": ["每会话独占 ToolContext 实例", "不跨会话共享状态", "空闲自动驱逐释放资源"] },
+    { "dot": "emerald", "title": "工具统一", "items": ["MCP 与内置 Agent 共用 50+ 工具", "StandardToolRegistry 单点装配", "注册表版本优先于原生工具"] },
+    { "dot": "rose", "title": "写回主干", "items": ["所有写操作经 repository", "fireChange() 触发 UI 自动刷新", "validate_findings 默认落库"] }
+  ]
+}

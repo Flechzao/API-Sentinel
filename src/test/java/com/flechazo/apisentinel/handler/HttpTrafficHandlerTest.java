@@ -21,7 +21,7 @@ import com.flechazo.apisentinel.matching.TrieMatchEngine;
 import com.flechazo.apisentinel.model.ApiEntry;
 import com.flechazo.apisentinel.model.ApiStatus;
 import com.flechazo.apisentinel.repository.InMemoryApiRepository;
-import com.flechazo.apisentinel.ui.UiEventBus;
+import com.flechazo.apisentinel.event.UiEventBus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Sentinel · 代码关联与污点分析</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'JetBrains Mono', monospace; background: #020617; min-height: 100vh; padding: 2rem; color: white; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container { background: rgba(15, 23, 42, 0.5); border-radius: 1rem; border: 1px solid #1e293b; padding: 1.5rem; overflow-x: auto; }
+    svg { width: 100%; min-width: 900px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; } .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; } .card-dot.amber { background: #fbbf24; } .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle { background: transparent; border: none; color: #475569; cursor: pointer; font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem; transition: color 0.2s, background 0.2s; }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button { background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8; padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+    @media print { body { background: #020617; padding: 1rem; } .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>API Sentinel · 代码关联与污点分析</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">流量 → 源码定位 → audit_codebase 取 sink → trace_taint_source 后向回溯 → source↔sink 关联 → 交实测</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 700">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrowamber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ① 流量输入 (cyan) -->
+        <rect x="40" y="36" width="920" height="64" rx="10" fill="rgba(15,23,42,0.35)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="56" y="58" fill="#22d3ee" font-size="11" font-weight="600">① 流量输入</text>
+        <rect x="300" y="64" width="400" height="30" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="500" y="84" fill="white" font-size="11" text-anchor="middle">被测端点 + 请求参数（用户可控 = 污点候选）</text>
+        <line x1="500" y1="100" x2="500" y2="124" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ② 源码定位 (emerald) -->
+        <rect x="40" y="124" width="920" height="92" rx="10" fill="rgba(15,23,42,0.35)" stroke="#34d399" stroke-width="1"/>
+        <text x="56" y="148" fill="#34d399" font-size="11" font-weight="600">② 源码定位（把端点对应到 handler / 变量）</text>
+        <rect x="70" y="160" width="200" height="44" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="170" y="187" fill="white" font-size="11" text-anchor="middle">search_source_code</text>
+        <rect x="290" y="160" width="200" height="44" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="390" y="187" fill="white" font-size="11" text-anchor="middle">find_definition</text>
+        <rect x="510" y="160" width="200" height="44" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="610" y="187" fill="white" font-size="11" text-anchor="middle">find_callers</text>
+        <rect x="730" y="160" width="200" height="44" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="830" y="187" fill="white" font-size="11" text-anchor="middle">grep_repo</text>
+        <line x1="500" y1="216" x2="500" y2="240" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ③ 取 sink (rose) -->
+        <rect x="40" y="240" width="920" height="96" rx="10" fill="rgba(15,23,42,0.35)" stroke="#fb7185" stroke-width="1"/>
+        <text x="56" y="264" fill="#fb7185" font-size="11" font-weight="600">③ 取 sink · audit_codebase（全局白盒审计，列出全部危险汇聚点 + 回溯 hint）</text>
+        <rect x="70" y="276" width="240" height="48" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="190" y="300" fill="white" font-size="12" font-weight="600" text-anchor="middle">audit_codebase</text>
+        <text x="190" y="316" fill="#94a3b8" font-size="9" text-anchor="middle">枚举 sink + 提供回溯 hint</text>
+        <text x="345" y="292" fill="#94a3b8" font-size="10">sink 类型：命令执行 · SQL 注入 · 文件读写 · 反序列化</text>
+        <text x="345" y="312" fill="#94a3b8" font-size="10">· SSRF · 弱加密 · 不安全随机数 …</text>
+        <line x1="500" y1="336" x2="500" y2="356" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ④ 污点回溯 (amber) -->
+        <rect x="40" y="356" width="920" height="160" rx="10" fill="rgba(15,23,42,0.35)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="56" y="380" fill="#fbbf24" font-size="11" font-weight="600">④ 污点回溯 · trace_taint_source（从 sink 变量向后回溯，正则启发式）</text>
+
+        <!-- backward chain (left) -->
+        <rect x="80" y="390" width="270" height="26" rx="5" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.3"/>
+        <text x="215" y="407" fill="white" font-size="10" text-anchor="middle">sink：危险调用（exec / SQL / …）</text>
+        <rect x="80" y="424" width="270" height="26" rx="5" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.3"/>
+        <text x="215" y="441" fill="white" font-size="10" text-anchor="middle">ASSIGNMENT：赋值来源</text>
+        <rect x="80" y="458" width="270" height="26" rx="5" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.3"/>
+        <text x="215" y="475" fill="white" font-size="10" text-anchor="middle">PARAMETER：函数参数</text>
+        <rect x="80" y="492" width="270" height="26" rx="5" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.3"/>
+        <text x="215" y="509" fill="white" font-size="10" text-anchor="middle">SOURCE_MATCH：污染源命中 ✓</text>
+        <!-- upward (backward) yellow arrows -->
+        <line x1="360" y1="505" x2="360" y2="416" stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arrowamber)"/>
+        <text x="372" y="462" fill="#fbbf24" font-size="9" transform="rotate(90 372 462)">向后回溯 chain</text>
+
+        <!-- termination + caveats (right) -->
+        <text x="430" y="402" fill="#94a3b8" font-size="10">终止条件：</text>
+        <text x="445" y="420" fill="#e2e8f0" font-size="10">· SOURCE_MATCH（找到污染源）</text>
+        <text x="445" y="438" fill="#e2e8f0" font-size="10">· DEAD_END（复杂表达式 / 无法识别）</text>
+        <text x="445" y="456" fill="#e2e8f0" font-size="10">· HOP_LIMIT（达最大跨文件跳数）</text>
+        <text x="430" y="480" fill="#94a3b8" font-size="10">返回 chain + other_call_sites_not_traced</text>
+        <text x="430" y="498" fill="#94a3b8" font-size="10">受 PathSandbox 约束（仅索引仓库内可读）</text>
+        <text x="430" y="512" fill="#fb7185" font-size="9.5">⚠ 启发式回溯，非真实数据流分析；每跳需 read_file 核实</text>
+        <line x1="500" y1="516" x2="500" y2="536" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ⑤ 关联 (violet) -->
+        <rect x="40" y="536" width="920" height="66" rx="10" fill="rgba(15,23,42,0.35)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="56" y="558" fill="#a78bfa" font-size="11" font-weight="600">⑤ source ↔ sink 关联</text>
+        <rect x="250" y="566" width="500" height="28" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="500" y="585" fill="white" font-size="11" text-anchor="middle">用户输入(source) ——关联—— 危险 sink → 可疑数据流</text>
+        <line x1="500" y1="602" x2="500" y2="622" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ⑥ 交实测 (emerald) -->
+        <rect x="40" y="622" width="920" height="60" rx="10" fill="rgba(15,23,42,0.35)" stroke="#34d399" stroke-width="1"/>
+        <rect x="200" y="635" width="600" height="32" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="500" y="656" fill="white" font-size="11" font-weight="600" text-anchor="middle">⑥ 交实测：verify_* / send_request 对可疑链做真实验证（接反幻觉闭环）</text>
+      </svg>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-header"><div class="card-dot emerald"></div><h3>源码定位工具</h3></div>
+        <ul>
+          <li>• search_source_code：端点 → 路由 handler</li>
+          <li>• find_definition / find_callers：符号定义与调用处</li>
+          <li>• grep_repo：仓库文本检索</li>
+          <li>• audit_codebase：全局白盒，枚举全部 sink</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-dot amber"></div><h3>trace_taint_source 回溯</h3></div>
+        <ul>
+          <li>• 从 sink 变量向后回溯（正则启发式）</li>
+          <li>• StepKind：ASSIGNMENT / PARAMETER / SOURCE_MATCH</li>
+          <li>• 终止：SOURCE_MATCH / DEAD_END / HOP_LIMIT</li>
+          <li>• 返回 chain + other_call_sites_not_traced</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-dot rose"></div><h3>可信边界（重要）</h3></div>
+        <ul>
+          <li>• 启发式回溯 ≠ 真实数据流分析</li>
+          <li>• 每一跳都需 read_file 核实，防止误接</li>
+          <li>• 受 PathSandbox 约束，仅读索引仓库内文件</li>
+          <li>• 关联出的链最终交 verify_* 实测才算证据</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">API Sentinel · 代码关联与污点分析 · audit_codebase + TaintTracer（Montoya API 扩展）</p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) { btn.textContent = '✗ Failed'; }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+    async function downloadPNG(btn) {
+      const orig = btn.textContent; btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a'); link.download = 'code-correlation-taint.png'; link.href = canvas.toDataURL('image/png'); link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) { btn.textContent = '✗ Failed'; }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+    async function downloadPDF(btn) {
+      const orig = btn.textContent; btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height); pdf.save('code-correlation-taint.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) { btn.textContent = '✗ Failed'; }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>

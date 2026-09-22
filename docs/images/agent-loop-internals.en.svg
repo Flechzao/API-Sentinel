@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="944" height="832" viewBox="0 0 944 832" role="img" aria-labelledby="title desc">
+  <title id="title">Inside the Agent Loop</title>
+  <desc id="desc">After startup assembly, perception and context management, LLM reasoning, tool execution, and observation form a ReAct loop. Guardrails apply throughout, not as a later execution stage. Rejected submissions return reasons so the agent can gather evidence and retry. An accepted submission, user cancellation, a limit, or an error ends the loop while retaining collected evidence. Submission acceptance does not mean confirmed.</desc>
+  <defs>
+    <marker id="arrowBlue" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2563eb"/></marker>
+    <marker id="arrowPurple" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#7c3aed"/></marker>
+    <marker id="arrowGreen" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#10a37f"/></marker>
+    <filter id="shadowSoft" x="-10%" y="-15%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.07"/></filter>
+    <style>
+      text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .title { font-size: 26px; font-weight: 700; fill: #111827; }
+      .heading { font-size: 16px; font-weight: 700; fill: #111827; }
+      .body { font-size: 15px; fill: #475569; }
+      .label { font-size: 13px; font-weight: 500; fill: #64748b; }
+      .blue { fill: #2563eb; } .purple { fill: #7c3aed; }
+      .green { fill: #087f65; } .orange { fill: #b45309; }
+      .edge { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+      .card { fill: #ffffff; stroke-width: 1.4; filter: url(#shadowSoft); }
+    </style>
+  </defs>
+  <rect width="944" height="832" fill="#ffffff"/>
+  <text x="472" y="44" text-anchor="middle" class="title">Inside the Agent Loop</text>
+  <text x="472" y="72" text-anchor="middle" class="body">Assemble → Perceive → Think → Act → Observe; observations feed the next turn</text>
+
+  <rect x="80" y="104" width="504" height="80" rx="10" class="card" stroke="#2563eb"/>
+  <text x="100" y="134" class="heading blue">Startup assembly</text>
+  <text x="100" y="160" class="body">System Prompt · tool registry · API &amp; session context</text>
+
+  <rect x="32" y="210" width="584" height="370" rx="12" fill="#f5f3ff" stroke="#c4b5fd" stroke-dasharray="5 5"/>
+  <text x="52" y="240" class="heading purple">ReAct iteration loop</text>
+  <text x="52" y="264" class="body">Append results, then perceive again</text>
+  <path d="M332 184 V276 H180 V294" class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)"/>
+
+  <rect x="64" y="294" width="232" height="96" rx="10" class="card" stroke="#2563eb"/>
+  <text x="84" y="324" class="heading blue">Perception / context</text>
+  <text x="84" y="348" class="body">Drop stale thinking</text>
+  <text x="84" y="370" class="body">Tiered, evidence-first trim</text>
+
+  <rect x="352" y="294" width="232" height="96" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="372" y="324" class="heading purple">LLM reasoning</text>
+  <text x="372" y="348" class="body">Choose the next direction</text>
+  <text x="372" y="370" class="body">Parse calls &amp; responses</text>
+
+  <rect x="352" y="456" width="232" height="96" rx="10" class="card" stroke="#10a37f"/>
+  <text x="372" y="486" class="heading green">Tool execution</text>
+  <text x="372" y="510" class="body">Read-only batches: parallel</text>
+  <text x="372" y="532" class="body">Requests / state ops: serial</text>
+
+  <rect x="64" y="456" width="232" height="96" rx="10" class="card" stroke="#10a37f"/>
+  <text x="84" y="486" class="heading green">Observation / feedback</text>
+  <text x="84" y="510" class="body">Append results &amp; evidence</text>
+  <text x="84" y="532" class="body">Detect anomalies &amp; WAF</text>
+
+  <path d="M296 342 H352" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <text x="324" y="326" text-anchor="middle" class="label purple">Think</text>
+  <path d="M468 390 V456" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <text x="484" y="413" class="label purple">tool_calls</text>
+  <text x="484" y="435" class="label purple">Execute calls</text>
+  <path d="M352 504 H296" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="324" y="488" text-anchor="middle" class="label green">Results</text>
+  <path d="M180 456 V390" class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)"/>
+  <text x="196" y="413" class="label blue">Continue</text>
+  <text x="196" y="435" class="label blue">Next turn</text>
+
+  <rect x="648" y="210" width="264" height="240" rx="12" fill="#fff7ed" stroke="#fdba74" stroke-dasharray="5 5"/>
+  <path d="M616 260 H648" class="edge" stroke="#d97706" stroke-dasharray="4 4"/>
+  <text x="668" y="240" class="heading orange">Guardrails · always active</text>
+  <text x="668" y="270" class="body">Safety breaker: 50 turns max</text>
+  <text x="668" y="294" class="body">Output ≤ 16384 tokens / turn</text>
+  <text x="668" y="330" class="body">Budget-based tiered trim</text>
+  <text x="668" y="354" class="body">Repeated clean / WAF results</text>
+  <text x="668" y="376" class="body">trigger reflection &amp; replanning</text>
+  <text x="668" y="422" class="label orange">Constraints, not execution stages</text>
+
+  <rect x="648" y="476" width="264" height="104" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="5 5"/>
+  <path d="M616 528 H648" class="edge" stroke="#94a3b8" stroke-dasharray="4 4"/>
+  <text x="668" y="506" class="heading">Submission is a tool call</text>
+  <text x="668" y="532" class="body">Gate rejects → returns reasons</text>
+  <text x="668" y="554" class="body">Gather evidence; keep looping</text>
+
+  <path d="M324 580 V624" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="340" y="608" class="label green">Any stop condition is met</text>
+  <rect x="32" y="624" width="880" height="176" rx="12" fill="#f0fdf4" stroke="#86d5b4" stroke-dasharray="5 5"/>
+  <text x="52" y="652" class="heading green">Termination &amp; evidence retention</text>
+
+  <rect x="52" y="668" width="260" height="108" rx="10" class="card" stroke="#10a37f"/>
+  <text x="72" y="697" class="heading green">Submission accepted</text>
+  <text x="72" y="723" class="body">submit_report → write report</text>
+  <text x="72" y="747" class="label green">Accepted ≠ confirmed</text>
+  <rect x="340" y="668" width="240" height="108" rx="10" class="card" stroke="#94a3b8"/>
+  <text x="360" y="697" class="heading">User cancellation</text>
+  <text x="360" y="723" class="body">cancel → preserve evidence</text>
+  <rect x="608" y="668" width="284" height="108" rx="10" class="card" stroke="#d97706"/>
+  <text x="628" y="697" class="heading orange">Limit or error</text>
+  <text x="628" y="723" class="body">fallback → keep collected evidence</text>
+</svg>

@@ -3,6 +3,7 @@ package com.flechazo.apisentinel.ui;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.geom.Arc2D;
 
 public final class ChatMessagePanel extends JPanel {
 
@@ -141,6 +142,88 @@ public final class ChatMessagePanel extends JPanel {
 
         panel.add(row, BorderLayout.CENTER);
         return panel;
+    }
+
+    // ── Factory: animated "thinking" note ──
+
+    /** The agent/LLM "思考中…" placeholder. Previously a flat static line — now
+     *  a self-drawn rotating arc spinner (reusing the {@link IconFactory}
+     *  RUNNING arc geometry) driven by a Swing {@link Timer}. The timer is
+     *  stashed as the {@code "anim-timer"} client property so {@code AiChatPanel}
+     *  can stop it when the run ends; the spinner also stops itself on
+     *  {@code removeNotify()} as a safety net. */
+    public static ChatMessagePanel thinkingMessage(BurpTheme theme) {
+        ChatMessagePanel panel = new ChatMessagePanel(theme);
+
+        JPanel row = new JPanel(new BorderLayout(0, 0));
+        row.setOpaque(false);
+
+        JPanel bar = new JPanel();
+        bar.setBackground(theme.stepRunningColor());
+        bar.setPreferredSize(new Dimension(3, 0));
+        row.add(bar, BorderLayout.WEST);
+
+        JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        line.setOpaque(false);
+        line.setBorder(new EmptyBorder(4, 10, 4, 2));
+
+        Spinner spinner = new Spinner(14, theme.stepRunningColor());
+        line.add(spinner);
+
+        JLabel label = new JLabel("思考中…");
+        label.setFont(theme.displayFont(Font.ITALIC, 12f));
+        label.setForeground(theme.systemColor());
+        line.add(label);
+
+        row.add(line, BorderLayout.CENTER);
+        panel.add(row, BorderLayout.CENTER);
+        // AiChatPanel's cleanup reads this to stop the animation on run end.
+        panel.putClientProperty("anim-timer", spinner.timer());
+        return panel;
+    }
+
+    /** Self-drawn rotating spinner — a 300° arc spun by a Swing Timer. Vector,
+     *  crisp at any size, theme-colored; no emoji, no image asset. */
+    public static final class Spinner extends JComponent {
+        private final Timer timer;
+        private final int sz;
+        private final Color color;
+        private double angle;
+
+        public Spinner(int sz, Color color) {
+            this.sz = sz;
+            this.color = color != null ? color : Color.GRAY;
+            setOpaque(false);
+            setPreferredSize(new Dimension(sz, sz));
+            // ~14 fps rotation; each tick advances 30° for a smooth spin.
+            timer = new Timer(70, e -> { angle += Math.PI / 6; repaint(); });
+            timer.start();
+        }
+
+        public Timer timer() { return timer; }
+
+        @Override public void removeNotify() {
+            super.removeNotify();
+            timer.stop(); // safety net beyond AiChatPanel's explicit cleanup
+        }
+
+        @Override protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL,
+                        RenderingHints.VALUE_STROKE_PURE);
+                g2.rotate(angle, sz / 2.0, sz / 2.0);
+                double s = sz / 24.0;
+                g2.scale(s, s);
+                g2.setColor(color);
+                g2.setStroke(new BasicStroke(2.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g2.draw(new Arc2D.Double(3, 3, 18, 18, 90, 300, Arc2D.OPEN));
+            } finally {
+                g2.dispose();
+            }
+        }
     }
 
     /** Map a note's leading glyph to its semantic accent color. */

@@ -68,6 +68,16 @@ public class AgentToolRegistry {
         return tools.get(name);
     }
 
+    /** Unregister a tool by name (used by tool management to disable tools). */
+    public void unregister(String name) {
+        tools.remove(name);
+    }
+
+    /** Get all registered tool names. */
+    public java.util.Set<String> getToolNames() {
+        return java.util.Collections.unmodifiableSet(tools.keySet());
+    }
+
     private static String escapeJson(String s) {
         if (s == null) return "";
         StringBuilder sb = new StringBuilder(s.length() + 16);

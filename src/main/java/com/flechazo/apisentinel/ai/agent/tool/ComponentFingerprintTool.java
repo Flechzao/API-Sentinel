@@ -25,6 +25,9 @@ public class ComponentFingerprintTool implements AgentTool {
     public String name() { return "fingerprint_components"; }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "Passively identify backend components (frameworks, libraries, admin endpoints) "
              + "from the captured response — Fastjson, Log4j, Shiro, Spring Actuator, Nacos, "

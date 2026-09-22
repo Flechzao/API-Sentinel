@@ -43,7 +43,7 @@ public class VerdictCardsPanel extends JPanel {
     public void showVerdict(FinalVerdict verdict, AnalysisResult trafficAnalysis) {
         cardsPanel.removeAll();
         if (verdict == null) {
-            cardsPanel.add(emptyLabel("暂无分析结果"));
+            cardsPanel.add(emptyLabel("No analysis results yet"));
         } else {
             cardsPanel.add(new SummaryCard(verdict.overallRisk(), verdict.summary()));
             cardsPanel.add(Box.createVerticalStrut(10));
@@ -62,7 +62,7 @@ public class VerdictCardsPanel extends JPanel {
                 }
             }
             if ((confirmed == null || confirmed.isEmpty()) && (suspected == null || suspected.isEmpty())) {
-                cardsPanel.add(emptyLabel("未发现 confirmed / suspected 漏洞"));
+                cardsPanel.add(emptyLabel("No confirmed / suspected vulnerabilities found"));
             }
         }
         cardsPanel.revalidate();
@@ -75,7 +75,7 @@ public class VerdictCardsPanel extends JPanel {
     public void showAnalysisResult(AnalysisResult result) {
         cardsPanel.removeAll();
         if (result == null || !result.isSuccess()) {
-            cardsPanel.add(emptyLabel(result != null ? ("分析失败: " + result.error()) : "无分析结果"));
+            cardsPanel.add(emptyLabel(result != null ? ("Analysis failed: " + result.error()) : "No analysis result"));
         } else {
             cardsPanel.add(new SummaryCard(result.overallRisk().name(), result.summary()));
             cardsPanel.add(Box.createVerticalStrut(10));
@@ -84,7 +84,7 @@ public class VerdictCardsPanel extends JPanel {
                 cardsPanel.add(Box.createVerticalStrut(10));
             }
             if (result.findings().isEmpty()) {
-                cardsPanel.add(emptyLabel("未发现漏洞"));
+                cardsPanel.add(emptyLabel("No vulnerabilities found"));
             }
         }
         cardsPanel.revalidate();
@@ -160,7 +160,7 @@ public class VerdictCardsPanel extends JPanel {
             body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
             body.setOpaque(false);
             String summary = summaryText != null ? summaryText : "";
-            if (summary.length() > 1500) summary = summary.substring(0, 1500) + "\n...[截断]";
+            if (summary.length() > 1500) summary = summary.substring(0, 1500) + "\n...[truncated]";
             JPanel md = markdownRenderer.renderToPanel(summary);
             md.setOpaque(false);
             body.add(md);
@@ -187,9 +187,9 @@ public class VerdictCardsPanel extends JPanel {
             inner.setOpaque(false);
             inner.setBorder(new EmptyBorder(11, 14, 11, 14));
             inner.add(headerRow(cv.type(), cv.title()));
-            if (notBlank(cv.evidence())) { inner.add(caption("证据")); inner.add(mono(cv.evidence())); }
-            if (notBlank(cv.payloadUsed())) { inner.add(caption("触发 Payload")); inner.add(mono(cv.payloadUsed())); }
-            if (notBlank(cv.verifyCommand())) { inner.add(caption("验证命令")); inner.add(mono(cv.verifyCommand())); }
+            if (notBlank(cv.evidence())) { inner.add(caption("Evidence")); inner.add(mono(cv.evidence())); }
+            if (notBlank(cv.payloadUsed())) { inner.add(caption("Trigger Payload")); inner.add(mono(cv.payloadUsed())); }
+            if (notBlank(cv.verifyCommand())) { inner.add(caption("Verify Command")); inner.add(mono(cv.verifyCommand())); }
             add(inner, BorderLayout.CENTER);
         }
 
@@ -201,8 +201,8 @@ public class VerdictCardsPanel extends JPanel {
             inner.setOpaque(false);
             inner.setBorder(new EmptyBorder(11, 14, 11, 14));
             inner.add(headerRow(sv.type(), sv.title()));
-            if (notBlank(sv.reason())) { inner.add(caption("疑似原因")); inner.add(mono(sv.reason())); }
-            if (notBlank(sv.verifyCommand())) { inner.add(caption("验证命令")); inner.add(mono(sv.verifyCommand())); }
+            if (notBlank(sv.reason())) { inner.add(caption("Suspected Reason")); inner.add(mono(sv.reason())); }
+            if (notBlank(sv.verifyCommand())) { inner.add(caption("Verify Command")); inner.add(mono(sv.verifyCommand())); }
             add(inner, BorderLayout.CENTER);
         }
 
@@ -215,10 +215,10 @@ public class VerdictCardsPanel extends JPanel {
             inner.setOpaque(false);
             inner.setBorder(new EmptyBorder(11, 14, 11, 14));
             inner.add(headerRow(f.type(), f.title()));
-            if (notBlank(f.description())) { inner.add(caption("描述")); inner.add(mono(f.description())); }
-            if (notBlank(f.evidence())) { inner.add(caption("证据")); inner.add(mono(f.evidence())); }
-            if (notBlank(f.location())) { inner.add(caption("位置")); inner.add(mono(f.location())); }
-            if (notBlank(f.remediation())) { inner.add(caption("修复建议")); inner.add(mono(f.remediation())); }
+            if (notBlank(f.description())) { inner.add(caption("Description")); inner.add(mono(f.description())); }
+            if (notBlank(f.evidence())) { inner.add(caption("Evidence")); inner.add(mono(f.evidence())); }
+            if (notBlank(f.location())) { inner.add(caption("Location")); inner.add(mono(f.location())); }
+            if (notBlank(f.remediation())) { inner.add(caption("Remediation")); inner.add(mono(f.remediation())); }
             add(inner, BorderLayout.CENTER);
         }
 

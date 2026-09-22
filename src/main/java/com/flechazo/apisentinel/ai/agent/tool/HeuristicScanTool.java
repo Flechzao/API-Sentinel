@@ -19,6 +19,9 @@ public class HeuristicScanTool implements AgentTool {
     public String name() { return "heuristic_scan"; }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "Run fast local heuristic detection on the HTTP traffic. Checks for SQL error messages, "
              + "stack traces, server version disclosure, CORS misconfiguration, JWT issues, CSRF, "

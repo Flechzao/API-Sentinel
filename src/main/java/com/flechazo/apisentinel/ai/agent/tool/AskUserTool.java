@@ -116,6 +116,13 @@ public class AskUserTool implements AgentTool {
         if (choice == null) {
             out.addProperty("answered", false);
             out.addProperty("reason", "用户未响应（超时或跳过）——请基于现有证据自主决策，并在报告中注明该问题未获用户确认");
+        } else if (choice == -2) {
+            // User typed a custom free-text answer
+            String customText = bridge.getLastCustomAnswer();
+            out.addProperty("answered", true);
+            out.addProperty("choice", customText != null ? customText : "(empty)");
+            out.addProperty("index", -2);
+            out.addProperty("custom", true);
         } else {
             out.addProperty("answered", true);
             out.addProperty("choice", options.get(choice));

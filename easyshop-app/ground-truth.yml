@@ -1,0 +1,788 @@
+# ground-truth.yml — API Sentinel Benchmark Ground Truth
+#
+# Structured truth for all 53 scored endpoints.
+# Each entry maps to the benchmark test framework.
+# Generated from GROUND_TRUTH.md + new endpoints (2026-09-07).
+#
+# Schema:
+#   id: sequential number
+#   method: HTTP method
+#   path: URL path (may include {param} placeholders)
+#   params: example parameters for the benchmark traffic driver
+#   vuln_type: vulnerability category enum
+#   cwe: CWE identifier
+#   cvss: CVSS 3.1 base score (0.0-10.0)
+#   severity: CRITICAL / HIGH / MEDIUM / LOW / INFO
+#   owasp: OWASP API Security Top 10 (2023) category
+#   vulnerable: true = has vulnerability, false = safe counterpart
+#   counterpart_id: id of the paired safe/vuln endpoint (-1 if none)
+#   requires_jump_layer: true = must trace into service layer to detect
+#   description: one-line description (no vulnerability names in UI)
+
+version: "2.0"
+generated: "2026-09-07"
+total: 53
+vulnerable_count: 32
+safe_count: 21
+
+endpoints:
+
+  # ── SQL Injection ──
+  - id: 1
+    method: GET
+    path: /api/users/search
+    params: { name: "x" }
+    vuln_type: SQL_INJECTION
+    cwe: CWE-89
+    cvss: 8.6
+    severity: HIGH
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 2
+    requires_jump_layer: false
+    description: "字符串拼接查询，报错回显数据库原始错误"
+
+  - id: 2
+    method: GET
+    path: /api/products/search
+    params: { name: "Widget" }
+    vuln_type: SQL_INJECTION
+    cwe: CWE-89
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 1
+    requires_jump_layer: false
+    description: "参数化查询，安全对照"
+
+  # ── Stack Trace / IDOR ──
+  - id: 3
+    method: GET
+    path: /api/orders/{id}
+    params: { id: "9999" }
+    vuln_type: STACK_TRACE_LEAK
+    cwe: CWE-209
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API8
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: true
+    description: "不存在的 ID 触发 NPE，完整 Java 堆栈返回"
+
+  - id: 4
+    method: GET
+    path: /api/orders/{id}
+    params: { id: "1001" }
+    vuln_type: IDOR
+    cwe: CWE-639
+    cvss: 6.5
+    severity: HIGH
+    owasp: API1
+    vulnerable: true
+    counterpart_id: 5
+    requires_jump_layer: true
+    description: "无归属校验，任何用户可读任意订单"
+
+  - id: 5
+    method: GET
+    path: /api/invoices/{id}
+    params: { id: "2001" }
+    vuln_type: IDOR
+    cwe: CWE-639
+    cvss: 0.0
+    severity: INFO
+    owasp: API1
+    vulnerable: false
+    counterpart_id: 4
+    requires_jump_layer: true
+    description: "service 层校验归属，安全对照"
+
+  # ── Vertical Privilege Escalation ──
+  - id: 6
+    method: GET
+    path: /api/admin/users
+    vuln_type: PRIVILEGE_ESCALATION
+    cwe: CWE-862
+    cvss: 8.1
+    severity: HIGH
+    owasp: API5
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: true
+    description: "只检查登录，不检查管理员角色"
+
+  # ── JWT ──
+  - id: 7
+    method: POST
+    path: /api/auth/token
+    params: { token: "eyJhbGciOiJub25lIn0.eyJ1c2VyIjoxfQ." }
+    vuln_type: JWT_ALG_NONE
+    cwe: CWE-345
+    cvss: 9.1
+    severity: CRITICAL
+    owasp: API2
+    vulnerable: true
+    counterpart_id: 8
+    requires_jump_layer: true
+    description: "接受 alg:none 绕过签名校验"
+
+  - id: 8
+    method: POST
+    path: /api/auth/verify
+    params: { token: "aaa.bbb.ccc" }
+    vuln_type: JWT_ALG_NONE
+    cwe: CWE-345
+    cvss: 0.0
+    severity: INFO
+    owasp: API2
+    vulnerable: false
+    counterpart_id: 7
+    requires_jump_layer: true
+    description: "完整 HS256 签名 + 过期校验"
+
+  # ── CORS ──
+  - id: 9
+    method: GET
+    path: /api/profile
+    vuln_type: CORS_MISCONFIGURATION
+    cwe: CWE-942
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API8
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: false
+    description: "Allow-Origin: * + Allow-Credentials: true 矛盾组合"
+
+  - id: 10
+    method: GET
+    path: /api/profile2
+    vuln_type: CORS_MISCONFIGURATION
+    cwe: CWE-942
+    cvss: 6.5
+    severity: MEDIUM
+    owasp: API8
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: false
+    description: "Origin 请求头被原样反射为 Allow-Origin"
+
+  # ── SSRF ──
+  - id: 11
+    method: POST
+    path: /api/fetch-url
+    params: { url: "http://127.0.0.1:8089/api/debug/config" }
+    vuln_type: SSRF
+    cwe: CWE-918
+    cvss: 7.5
+    severity: HIGH
+    owasp: API7
+    vulnerable: true
+    counterpart_id: 12
+    requires_jump_layer: true
+    description: "无白名单，可请求内部地址"
+
+  - id: 12
+    method: POST
+    path: /api/fetch-external
+    params: { url: "http://127.0.0.1:8089/api/debug/config" }
+    vuln_type: SSRF
+    cwe: CWE-918
+    cvss: 0.0
+    severity: INFO
+    owasp: API7
+    vulnerable: false
+    counterpart_id: 11
+    requires_jump_layer: true
+    description: "域名白名单校验"
+
+  # ── File Upload ──
+  - id: 13
+    method: POST
+    path: /api/upload
+    vuln_type: DANGEROUS_FILE_UPLOAD
+    cwe: CWE-434
+    cvss: 7.5
+    severity: HIGH
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 14
+    requires_jump_layer: false
+    description: "任意扩展名上传，文件名原样保存"
+
+  - id: 14
+    method: POST
+    path: /api/upload-image
+    vuln_type: DANGEROUS_FILE_UPLOAD
+    cwe: CWE-434
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 13
+    requires_jump_layer: false
+    description: "扩展名白名单 + 随机文件名"
+
+  # ── Deserialization ──
+  - id: 15
+    method: POST
+    path: /api/import
+    vuln_type: INSECURE_DESERIALIZATION
+    cwe: CWE-502
+    cvss: 8.1
+    severity: HIGH
+    owasp: API8
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: false
+    description: "直接对用户字节做 Java ObjectInputStream 反序列化"
+
+  # ── Missing Security Headers ──
+  - id: 16
+    method: GET
+    path: /web/dashboard
+    vuln_type: MISSING_SECURITY_HEADERS
+    cwe: CWE-693
+    cvss: 3.7
+    severity: LOW
+    owasp: API8
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: false
+    description: "无 CSP / HSTS / X-Frame-Options 等安全响应头"
+
+  # ── Sensitive Data Exposure ──
+  - id: 17
+    method: GET
+    path: /api/users/{id}
+    params: { id: "1" }
+    vuln_type: SENSITIVE_DATA_EXPOSURE
+    cwe: CWE-200
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 18
+    requires_jump_layer: false
+    description: "返回完整记录含密码哈希和身份证号"
+
+  - id: 18
+    method: GET
+    path: /api/users/{id}/public
+    params: { id: "1" }
+    vuln_type: SENSITIVE_DATA_EXPOSURE
+    cwe: CWE-200
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 17
+    requires_jump_layer: false
+    description: "只返回过滤后的公开字段"
+
+  # ── Debug Info Leak ──
+  - id: 19
+    method: GET
+    path: /api/debug/config
+    vuln_type: DEBUG_INFO_LEAK
+    cwe: CWE-215
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API8
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: false
+    description: "暴露 debug:true、内网 IP、数据库连接串"
+
+  # ── CSRF ──
+  - id: 20
+    method: POST
+    path: /api/checkout
+    vuln_type: CSRF
+    cwe: CWE-352
+    cvss: 6.5
+    severity: MEDIUM
+    owasp: API8
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: false
+    description: "Cookie 认证的状态变更操作，无 CSRF Token"
+
+  # ── XSS ──
+  - id: 21
+    method: GET
+    path: /api/greet
+    params: { name: "<script>alert(1)</script>" }
+    vuln_type: XSS_REFLECTED
+    cwe: CWE-79
+    cvss: 6.1
+    severity: MEDIUM
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 22
+    requires_jump_layer: false
+    description: "用户输入直接拼进 HTML 返回"
+
+  - id: 22
+    method: GET
+    path: /api/welcome
+    params: { name: "<script>alert(1)</script>" }
+    vuln_type: XSS_REFLECTED
+    cwe: CWE-79
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 21
+    requires_jump_layer: false
+    description: "HtmlUtils.htmlEscape 转义"
+
+  # ── SSTI ──
+  - id: 23
+    method: GET
+    path: /api/render
+    params: { template: "${7*7}" }
+    vuln_type: SSTI
+    cwe: CWE-1336
+    cvss: 9.8
+    severity: CRITICAL
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 24
+    requires_jump_layer: false
+    description: "用户输入作为 Freemarker 模板编译执行"
+
+  - id: 24
+    method: GET
+    path: /api/preview
+    params: { template: "${7*7}" }
+    vuln_type: SSTI
+    cwe: CWE-1336
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 23
+    requires_jump_layer: false
+    description: "固定模板 + 变量占位，不解析用户输入"
+
+  # ── Path Traversal ──
+  - id: 25
+    method: GET
+    path: /api/files
+    params: { path: "../../../etc/passwd" }
+    vuln_type: PATH_TRAVERSAL
+    cwe: CWE-22
+    cvss: 7.5
+    severity: HIGH
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 26
+    requires_jump_layer: false
+    description: "用户输入直接拼接文件路径"
+
+  - id: 26
+    method: GET
+    path: /api/documents
+    params: { path: "../../../etc/passwd" }
+    vuln_type: PATH_TRAVERSAL
+    cwe: CWE-22
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 25
+    requires_jump_layer: false
+    description: "规范化后校验路径前缀"
+
+  # ── XXE ──
+  - id: 27
+    method: POST
+    path: /api/parse-xml
+    vuln_type: XXE
+    cwe: CWE-611
+    cvss: 7.5
+    severity: HIGH
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 28
+    requires_jump_layer: false
+    description: "XML 解析器未禁用外部实体"
+
+  - id: 28
+    method: POST
+    path: /api/parse-config
+    vuln_type: XXE
+    cwe: CWE-611
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 27
+    requires_jump_layer: false
+    description: "禁用 DTD 和外部实体"
+
+  # ── Boolean Blind SQLi ──
+  - id: 29
+    method: GET
+    path: /api/products/detail
+    params: { id: "1 AND 1=1" }
+    vuln_type: SQL_INJECTION_BLIND
+    cwe: CWE-89
+    cvss: 8.6
+    severity: HIGH
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 30
+    requires_jump_layer: false
+    description: "整数 id 直接拼接，响应差异可作为布尔条件"
+
+  - id: 30
+    method: GET
+    path: /api/product-info
+    params: { id: "1" }
+    vuln_type: SQL_INJECTION_BLIND
+    cwe: CWE-89
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 29
+    requires_jump_layer: false
+    description: "参数化查询"
+
+  # ── Race Condition ──
+  - id: 31
+    method: POST
+    path: /api/transfer
+    params: { amount: "100", toUser: "2" }
+    vuln_type: RACE_CONDITION
+    cwe: CWE-367
+    cvss: 6.5
+    severity: MEDIUM
+    owasp: API6
+    vulnerable: true
+    counterpart_id: 32
+    requires_jump_layer: true
+    description: "余额检查和扣款分两步，无锁无事务"
+
+  - id: 32
+    method: POST
+    path: /api/wallet/transfer
+    params: { amount: "100", toUser: "2" }
+    vuln_type: RACE_CONDITION
+    cwe: CWE-367
+    cvss: 0.0
+    severity: INFO
+    owasp: API6
+    vulnerable: false
+    counterpart_id: 31
+    requires_jump_layer: true
+    description: "UPDATE ... WHERE balance >= ? 原子操作"
+
+  # ── Insecure Random ──
+  - id: 33
+    method: POST
+    path: /api/reset-token
+    params: { username: "alice" }
+    vuln_type: INSECURE_RANDOM
+    cwe: CWE-330
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API2
+    vulnerable: true
+    counterpart_id: 34
+    requires_jump_layer: true
+    description: "java.util.Random 生成 token，可被预测"
+
+  - id: 34
+    method: POST
+    path: /api/password/reset
+    params: { username: "alice" }
+    vuln_type: INSECURE_RANDOM
+    cwe: CWE-330
+    cvss: 0.0
+    severity: INFO
+    owasp: API2
+    vulnerable: false
+    counterpart_id: 33
+    requires_jump_layer: true
+    description: "SecureRandom + 32 字节"
+
+  # ── Hardcoded Crypto Key ──
+  - id: 35
+    method: POST
+    path: /api/encrypt
+    params: { data: "sensitive info" }
+    vuln_type: HARDCODED_KEY
+    cwe: CWE-798
+    cvss: 7.5
+    severity: HIGH
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 36
+    requires_jump_layer: true
+    description: "AES 密钥硬编码在源码中，使用 ECB 模式"
+
+  - id: 36
+    method: POST
+    path: /api/seal
+    params: { data: "sensitive info" }
+    vuln_type: HARDCODED_KEY
+    cwe: CWE-798
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 35
+    requires_jump_layer: true
+    description: "环境变量密钥 + CBC 模式"
+
+  # ── Weak Password Hash ──
+  - id: 37
+    method: POST
+    path: /api/register
+    params: { username: "test", password: "hello123" }
+    vuln_type: WEAK_HASH
+    cwe: CWE-916
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API2
+    vulnerable: true
+    counterpart_id: 38
+    requires_jump_layer: true
+    description: "MD5 无盐哈希"
+
+  - id: 38
+    method: POST
+    path: /api/signup
+    params: { username: "test", password: "hello123" }
+    vuln_type: WEAK_HASH
+    cwe: CWE-916
+    cvss: 0.0
+    severity: INFO
+    owasp: API2
+    vulnerable: false
+    counterpart_id: 37
+    requires_jump_layer: true
+    description: "BCrypt 加盐哈希"
+
+  # ── Open Redirect ──
+  - id: 39
+    method: GET
+    path: /api/redirect
+    params: { url: "https://evil.com/phishing" }
+    vuln_type: OPEN_REDIRECT
+    cwe: CWE-601
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 40
+    requires_jump_layer: true
+    description: "用户 URL 直接放进 302 Location 头"
+
+  - id: 40
+    method: GET
+    path: /api/goto
+    params: { url: "https://evil.com/phishing" }
+    vuln_type: OPEN_REDIRECT
+    cwe: CWE-601
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 39
+    requires_jump_layer: true
+    description: "URL host 白名单校验"
+
+  # ── Mass Assignment ──
+  - id: 41
+    method: POST
+    path: /api/profile/update
+    params: { name: "hacker", email: "h@x.com", role: "admin", admin: true }
+    vuln_type: MASS_ASSIGNMENT
+    cwe: CWE-915
+    cvss: 8.1
+    severity: HIGH
+    owasp: API3
+    vulnerable: true
+    counterpart_id: 42
+    requires_jump_layer: true
+    description: "直接绑定含 role/admin 字段的实体"
+
+  - id: 42
+    method: POST
+    path: /api/profile/save
+    params: { name: "hacker", email: "h@x.com", role: "admin", admin: true }
+    vuln_type: MASS_ASSIGNMENT
+    cwe: CWE-915
+    cvss: 0.0
+    severity: INFO
+    owasp: API3
+    vulnerable: false
+    counterpart_id: 41
+    requires_jump_layer: true
+    description: "只接受 DTO（name/email）"
+
+  # ── IDOR Modify ──
+  - id: 43
+    method: PUT
+    path: /api/orders/{id}/quantity
+    params: { id: "1001", quantity: "999" }
+    vuln_type: IDOR
+    cwe: CWE-639
+    cvss: 6.5
+    severity: HIGH
+    owasp: API1
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: true
+    description: "无归属校验，任何用户可修改任何订单"
+
+  # ── Business Logic ──
+  - id: 44
+    method: POST
+    path: /api/orders
+    params: { item: "Widget", quantity: "-10", price: "0.01", total: "-0.10" }
+    vuln_type: BUSINESS_LOGIC
+    cwe: CWE-602
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API6
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: false
+    description: "无输入校验，price/quantity 可被篡改"
+
+  # ── Command Injection (NEW) ──
+  - id: 45
+    method: GET
+    path: /api/logs
+    params: { file: "app.log" }
+    vuln_type: COMMAND_INJECTION
+    cwe: CWE-78
+    cvss: 9.8
+    severity: CRITICAL
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 46
+    requires_jump_layer: false
+    description: "文件名拼接进 shell 命令，可执行任意命令"
+
+  - id: 46
+    method: GET
+    path: /api/system-logs
+    params: { file: "app.log" }
+    vuln_type: COMMAND_INJECTION
+    cwe: CWE-78
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 45
+    requires_jump_layer: false
+    description: "白名单校验 + Java NIO 读取，无 shell 调用"
+
+  # ── NoSQL Injection (NEW) ──
+  - id: 47
+    method: POST
+    path: /api/mongo/login
+    params: { username: {"$ne": ""}, password: {"$ne": ""} }
+    vuln_type: NOSQL_INJECTION
+    cwe: CWE-943
+    cvss: 9.1
+    severity: CRITICAL
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 48
+    requires_jump_layer: false
+    description: "JSON 查询操作符直接求值，$ne 可绕过认证"
+
+  - id: 48
+    method: POST
+    path: /api/mongo/auth
+    params: { username: {"$ne": ""}, password: {"$ne": ""} }
+    vuln_type: NOSQL_INJECTION
+    cwe: CWE-943
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 47
+    requires_jump_layer: false
+    description: "拒绝含 $ 操作符的查询值"
+
+  # ── CRLF Injection (NEW) ──
+  - id: 49
+    method: GET
+    path: /api/download
+    params: { filename: "report.pdf\r\nX-Injected: evil" }
+    vuln_type: CRLF_INJECTION
+    cwe: CWE-113
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API8
+    vulnerable: true
+    counterpart_id: 50
+    requires_jump_layer: false
+    description: "用户输入直接放入响应头，可注入任意 HTTP 头"
+
+  - id: 50
+    method: GET
+    path: /api/fetch-file
+    params: { filename: "report.pdf" }
+    vuln_type: CRLF_INJECTION
+    cwe: CWE-113
+    cvss: 0.0
+    severity: INFO
+    owasp: API8
+    vulnerable: false
+    counterpart_id: 49
+    requires_jump_layer: false
+    description: "过滤 CR/LF 字符后再放入响应头"
+
+  # ── Coupon Replay (NEW) ──
+  - id: 51
+    method: POST
+    path: /api/coupon/apply
+    params: { code: "SAVE10", orderTotal: "100" }
+    vuln_type: BUSINESS_LOGIC
+    cwe: CWE-613
+    cvss: 5.3
+    severity: MEDIUM
+    owasp: API6
+    vulnerable: true
+    counterpart_id: 52
+    requires_jump_layer: false
+    description: "同一优惠券可无限次使用，无使用追踪"
+
+  - id: 52
+    method: POST
+    path: /api/coupon/redeem
+    params: { code: "SAVE10", orderTotal: "100" }
+    vuln_type: BUSINESS_LOGIC
+    cwe: CWE-613
+    cvss: 0.0
+    severity: INFO
+    owasp: API6
+    vulnerable: false
+    counterpart_id: 51
+    requires_jump_layer: false
+    description: "一次性优惠券，首次使用后标记为已用"
+
+  # ── Shadow API / Deprecated Endpoints (NEW) ──
+  - id: 53
+    method: GET
+    path: /api/v0/users
+    vuln_type: SHADOW_API
+    cwe: CWE-1051
+    cvss: 7.5
+    severity: HIGH
+    owasp: API9
+    vulnerable: true
+    counterpart_id: -1
+    requires_jump_layer: false
+    description: "废弃 v0 端点仍然可访问，无认证保护，暴露全部用户数据"

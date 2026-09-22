@@ -1,0 +1,26 @@
+# Sensitive Data Exposure Detection
+id: custom-sensitive-data
+name: Sensitive Data Exposure in API Response
+severity: high
+type: response-pattern
+
+description: Detects sensitive information leaked in API responses (passwords, tokens, PII)
+remediation: Use DTO pattern to exclude sensitive fields. Never return passwords, tokens, or PII in responses.
+
+matchers:
+  - type: regex
+    pattern: "(?i)(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\"\\s*:\\s*\"[^\"]+\""
+    condition: or
+    part: body
+
+  - type: regex
+    pattern: "(?i)(private[_-]?key|encryption[_-]?key|session[_-]?id|auth[_-]?token)\"\\s*:\\s*\"[^\"]+\""
+    condition: or
+    part: body
+
+  - type: regex
+    pattern: "(ssn|social[_-]?security|credit[_-]?card|cvv|cvv2)\"\\s*:\\s*\"?[\\d\\-]+\"?"
+    condition: or
+    part: body
+
+tags: data-exposure, pii, credentials, owasp-a02, high

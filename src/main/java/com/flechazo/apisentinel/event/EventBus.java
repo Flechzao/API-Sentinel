@@ -75,9 +75,16 @@ public class EventBus {
                     ((Consumer<T>) handler).accept(event);
                 } catch (Exception e) {
                     if (logger != null) {
-                        logger.error("[EventBus] Handler exception: %s", e.getMessage());
+                        logger.error("[EventBus] Handler exception for %s: %s",
+                                event.getClass().getSimpleName(), e.toString());
+                        // Print full stack trace — getMessage() alone hides
+                        // the root cause, making event handler bugs nearly
+                        // impossible to diagnose.
+                        e.printStackTrace(System.err);
                     } else {
-                        System.err.println("[EventBus] Handler exception: " + e.getMessage());
+                        System.err.println("[EventBus] Handler exception for "
+                                + event.getClass().getSimpleName() + ":");
+                        e.printStackTrace(System.err);
                     }
                     // A single failing handler must not stop sibling handlers
                 }

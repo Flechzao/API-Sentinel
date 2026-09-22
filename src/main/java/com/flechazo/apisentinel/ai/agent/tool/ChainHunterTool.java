@@ -51,6 +51,12 @@ public class ChainHunterTool implements AgentTool {
                 + "payload 为路径 ID 替换，身份证据是会话 A 换 victim ID 拿到会话 B 数据\"）。");
         props.add("task", taskProp);
 
+        JsonObject maxIterProp = new JsonObject();
+        maxIterProp.addProperty("type", "integer");
+        maxIterProp.addProperty("description", "Maximum LLM iterations for the sub-agent (default 10, max 20). "
+                + "Lower this to control cost; raise for complex sibling clusters.");
+        props.add("max_iterations", maxIterProp);
+
         schema.add("properties", props);
         JsonArray required = new JsonArray();
         required.add("task");
@@ -61,9 +67,13 @@ public class ChainHunterTool implements AgentTool {
     @Override
     public String execute(String argumentsJson) {
         String task;
+        int maxIterations = 10;
         try {
             var parsed = com.google.gson.JsonParser.parseString(argumentsJson).getAsJsonObject();
             task = parsed.has("task") ? parsed.get("task").getAsString() : "";
+            if (parsed.has("max_iterations") && !parsed.get("max_iterations").isJsonNull()) {
+                maxIterations = Math.min(Math.max(parsed.get("max_iterations").getAsInt(), 3), 20);
+            }
         } catch (Exception e) {
             return "{\"success\": false, \"error\": \"invalid arguments: " + escapeJson(e.getMessage()) + "\"}";
         }
@@ -82,7 +92,26 @@ public class ChainHunterTool implements AgentTool {
                 ctx.oobService());
         AgentToolRegistry subRegistry = StandardToolRegistry.buildChainHunter(subCtx, sharedSendTool);
 
-        ChainHunterSubAgent.Result result = ChainHunterSubAgent.run(ctx.provider(), subRegistry, task, ctx.logger());
+        // Collect already-tested endpoints from parent's PayloadResults for dedup
+        java.util.Set<String> alreadyTestedPaths = new java.util.HashSet<>();
+        if (sharedSendTool != null) {
+            for (var pr : sharedSendTool.getPayloadResults()) {
+                if (pr.sentRequest() != null && !pr.sentRequest().isEmpty()) {
+                    // Extract the path from the first line of the raw request
+                    String firstLine = pr.sentRequest().split("\r?\n")[0];
+                    if (firstLine.contains(" ")) {
+                        String path = firstLine.substring(firstLine.indexOf(' ') + 1);
+                        int sp = path.indexOf(' ');
+                        if (sp > 0) path = path.substring(0, sp);
+                        alreadyTestedPaths.add(path);
+                    }
+                }
+            }
+        }
+
+        ChainHunterSubAgent.Result result = ChainHunterSubAgent.run(
+                ctx.provider(), subRegistry, task, ctx.logger(), maxIterations, alreadyTestedPaths,
+                ctx.cheapModelOverride());
 
         int requestsSent = (sharedSendTool != null ? sharedSendTool.getPayloadResults().size() : 0) - requestsBefore;
 

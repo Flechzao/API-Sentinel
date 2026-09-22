@@ -26,10 +26,35 @@ public class TestGenPrompt {
         return SYSTEM_PROMPT;
     }
 
+    /** P2-4: nonce-aware form. Bakes {@link UntrustedContent#fenceInstruction()}
+     *  into the prompt so the model knows the nonce-bearing markers that wrap
+     *  the attacker-controlled blocks (parameters, Stage-1 findings evidence,
+     *  source code) in {@link #buildUserPrompt(UntrustedContent, …)}. Pre-P2-4
+     *  the Stage-1 findings' {@code evidence} field — which the Stage-1 LLM
+     *  may have quoted verbatim from the (fenced) target response — was re-fed
+     *  to the Stage-3 LLM with no fence, a re-injection vector. */
+    public static String getSystemPrompt(UntrustedContent untrusted) {
+        return SYSTEM_PROMPT + "\n\n" + untrusted.fenceInstruction();
+    }
+
     /**
      * Build user prompt with Stage 1 findings to guide payload generation.
      */
     public static String buildUserPrompt(String method, String path, String host,
+                                          String parameters, String sourceCode,
+                                          List<VulnFinding> stage1Findings) {
+        return buildUserPrompt(UntrustedContent.forRun(), method, path, host,
+                parameters, sourceCode, stage1Findings);
+    }
+
+    /** P2-4: nonce-aware form. The attacker-controlled blocks (observed
+     *  parameters, Stage-1 findings evidence/description, source code) are
+     *  wrapped in one nonce fence so a Stage-1 evidence snippet that quoted
+     *  target-response bytes can't carry prompt injection into payload
+     *  generation. Plugin-trusted sections (payload library, bypass/variant/
+     *  business-logic matrices, output format) stay outside the fence. */
+    public static String buildUserPrompt(UntrustedContent untrusted,
+                                          String method, String path, String host,
                                           String parameters, String sourceCode,
                                           List<VulnFinding> stage1Findings) {
         StringBuilder sb = new StringBuilder();
@@ -37,36 +62,39 @@ public class TestGenPrompt {
         sb.append(method).append(" ").append(path).append("\n");
         sb.append("Host: ").append(host).append("\n\n");
 
-        sb.append("## 已观察到的参数\n");
-        sb.append(parameters.isEmpty() ? "未观察到参数" : parameters).append("\n\n");
+        // Collect attacker-controllable context into one fenced block.
+        StringBuilder untrustedBlock = new StringBuilder();
+        untrustedBlock.append("## 已观察到的参数\n");
+        untrustedBlock.append(parameters == null || parameters.isEmpty() ? "未观察到参数" : parameters).append("\n\n");
 
         // Stage 1 findings — THE KEY: guide payload generation based on what was actually found
         if (stage1Findings != null && !stage1Findings.isEmpty()) {
-            sb.append("## 前置流量分析发现（必须聚焦这些方向生成 Payload）\n");
+            untrustedBlock.append("## 前置流量分析发现（必须聚焦这些方向生成 Payload）\n");
             for (int i = 0; i < stage1Findings.size(); i++) {
                 VulnFinding f = stage1Findings.get(i);
-                sb.append(i + 1).append(". [").append(f.risk()).append("] ").append(f.type())
+                untrustedBlock.append(i + 1).append(". [").append(f.risk()).append("] ").append(f.type())
                         .append(": ").append(f.title()).append("\n");
                 if (f.evidence() != null && !f.evidence().isEmpty()) {
-                    sb.append("   证据: ").append(truncate(f.evidence(), 200)).append("\n");
+                    untrustedBlock.append("   证据: ").append(truncate(f.evidence(), 200)).append("\n");
                 }
                 if (f.description() != null && !f.description().isEmpty()) {
-                    sb.append("   描述: ").append(truncate(f.description(), 200)).append("\n");
+                    untrustedBlock.append("   描述: ").append(truncate(f.description(), 200)).append("\n");
                 }
             }
-            sb.append("\n**要求**: 优先为上述发现生成验证 Payload。只在有充分理由时才为未提到的漏洞类型生成测试。\n\n");
+            untrustedBlock.append("\n**要求**: 优先为上述发现生成验证 Payload。只在有充分理由时才为未提到的漏洞类型生成测试。\n\n");
         } else {
-            sb.append("## 前置流量分析发现\n");
-            sb.append("前置分析未发现明确可疑点。请基于接口特征（参数类型、请求方法）进行针对性探测，\n");
-            sb.append("但不要为不相关的漏洞类型强行生成 Payload（如对无参数的 GET 接口生成 SQL 注入）。\n\n");
+            untrustedBlock.append("## 前置流量分析发现\n");
+            untrustedBlock.append("前置分析未发现明确可疑点。请基于接口特征（参数类型、请求方法）进行针对性探测，\n");
+            untrustedBlock.append("但不要为不相关的漏洞类型强行生成 Payload（如对无参数的 GET 接口生成 SQL 注入）。\n\n");
         }
 
-        sb.append("## 源码上下文\n");
+        untrustedBlock.append("## 源码上下文\n");
         if (sourceCode != null && !sourceCode.isEmpty()) {
-            sb.append("```\n").append(truncate(sourceCode, 5000)).append("\n```\n\n");
+            untrustedBlock.append("```\n").append(truncate(sourceCode, 5000)).append("\n```\n\n");
         } else {
-            sb.append("无可用源码\n\n");
+            untrustedBlock.append("无可用源码\n\n");
         }
+        sb.append(untrusted.wrap("analysis context", untrustedBlock.toString()));
 
         // On-demand payload reference library: distilled from bughunter's
         // security-arsenal (see src/main/resources/payloads/payload-library.md).

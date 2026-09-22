@@ -116,8 +116,7 @@ public class SensitiveRulesPanel extends JPanel {
                     saveUserRules();
                     countLabel.setText("(" + rules.size() + " 条规则已加载)");
                 } catch (Exception ex) {
-                    JOptionPane.showMessageDialog(this, "无效正则: " + ex.getMessage(),
-                            "错误", JOptionPane.ERROR_MESSAGE);
+                    ThemedDialogs.error(this, "无效正则: " + ex.getMessage(), "错误");
                 }
             }
         }

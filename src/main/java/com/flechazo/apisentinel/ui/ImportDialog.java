@@ -25,7 +25,7 @@ public class ImportDialog extends JDialog {
     private final Runnable onScanHistory;
 
     public ImportDialog(Window owner, Consumer<String> onImport, Runnable onScanHistory, BurpTheme theme) {
-        super(owner, "批量导入 API", ModalityType.APPLICATION_MODAL);
+        super(owner, I18n.get("import_dialog_title"), ModalityType.APPLICATION_MODAL);
         this.theme = theme;
         this.onScanHistory = onScanHistory;
         setSize(740, 460);
@@ -38,7 +38,7 @@ public class ImportDialog extends JDialog {
         textArea.setFont(theme.editorFont(12f));
         textArea.setLineWrap(false);
         JScrollPane scrollPane = new JScrollPane(textArea);
-        scrollPane.setBorder(BorderFactory.createTitledBorder("API 列表（每行一个）"));
+        scrollPane.setBorder(BorderFactory.createTitledBorder(I18n.get("import_list_border")));
         add(scrollPane, BorderLayout.CENTER);
 
         // Right: hints + options + file import buttons
@@ -53,17 +53,35 @@ public class ImportDialog extends JDialog {
         rightPanel.add(title);
         rightPanel.add(Box.createVerticalStrut(12));
 
-        String[] hints = {
-            "导入格式（每行一个）:",
+        // Format hints (localized, keep example paths as-is)
+        JLabel formatHeader = new JLabel(I18n.get("import_format_header"));
+        formatHeader.setFont(theme.displayFont(Font.BOLD, 11f));
+        formatHeader.setAlignmentX(LEFT_ALIGNMENT);
+        rightPanel.add(formatHeader);
+        rightPanel.add(Box.createVerticalStrut(2));
+
+        String[] examples = {
             "GET /api/v1/users",
             "POST /api/v1/login",
             "/api/v1/orders/{id}",
             "/api/v1/admin/**",
-            "",
-            "支持带/不带 HTTP 方法",
-            "支持 {id} 路径占位符",
-            "支持 /** 匹配所有子路径",
-            "重复的 API 会自动跳过"
+            "GET /api/v1/users api.example.com"
+        };
+        for (String ex : examples) {
+            JLabel l = new JLabel(ex);
+            l.setFont(theme.editorFont(11f));
+            l.setAlignmentX(LEFT_ALIGNMENT);
+            rightPanel.add(l);
+            rightPanel.add(Box.createVerticalStrut(2));
+        }
+        rightPanel.add(Box.createVerticalStrut(6));
+
+        String[] hints = {
+            I18n.get("import_format_no_method"),
+            I18n.get("import_format_path_var"),
+            I18n.get("import_format_wildcard"),
+            I18n.get("import_format_domain"),
+            I18n.get("import_format_dedup")
         };
         for (String h : hints) {
             JLabel l = new JLabel(h);
@@ -76,30 +94,30 @@ public class ImportDialog extends JDialog {
         rightPanel.add(Box.createVerticalStrut(12));
 
         // --- Import options ---
-        JLabel optLabel = new JLabel("导入选项:");
+        JLabel optLabel = new JLabel(I18n.get("import_options_label"));
         optLabel.setFont(theme.displayFont(Font.BOLD, 12f));
         optLabel.setAlignmentX(LEFT_ALIGNMENT);
         rightPanel.add(optLabel);
         rightPanel.add(Box.createVerticalStrut(4));
 
-        urlEncodeCb = new JCheckBox("URL 编码路径");
+        urlEncodeCb = new JCheckBox(I18n.get("import_url_encode"));
         urlEncodeCb.setFont(theme.displayFont(Font.PLAIN, 11f));
         urlEncodeCb.setAlignmentX(LEFT_ALIGNMENT);
-        urlEncodeCb.setToolTipText("将路径中的 / 编码为 %2F，用于匹配部分系统中被编码的路径流量");
+        urlEncodeCb.setToolTipText(I18n.get("import_url_encode_tip"));
         rightPanel.add(urlEncodeCb);
         rightPanel.add(Box.createVerticalStrut(4));
 
-        scanHistoryCb = new JCheckBox("导入后扫描历史流量");
+        scanHistoryCb = new JCheckBox(I18n.get("import_scan_history"));
         scanHistoryCb.setFont(theme.displayFont(Font.PLAIN, 11f));
         scanHistoryCb.setAlignmentX(LEFT_ALIGNMENT);
-        scanHistoryCb.setSelected(true);  // 默认开启
-        scanHistoryCb.setToolTipText("导入完成后自动扫描 Burp Proxy History，为已出现过的接口补充匹配信息");
+        scanHistoryCb.setSelected(true);  // default on
+        scanHistoryCb.setToolTipText(I18n.get("import_scan_history_tip"));
         rightPanel.add(scanHistoryCb);
 
         rightPanel.add(Box.createVerticalStrut(12));
 
         // --- File import buttons ---
-        JLabel fileLabel = new JLabel("从文件导入:");
+        JLabel fileLabel = new JLabel(I18n.get("import_from_file"));
         fileLabel.setFont(theme.displayFont(Font.BOLD, 12f));
         fileLabel.setAlignmentX(LEFT_ALIGNMENT);
         rightPanel.add(fileLabel);
@@ -108,7 +126,7 @@ public class ImportDialog extends JDialog {
         // Plain text labels, not emoji — emoji glyphs render at inconsistent
         // sizes/baselines across OS fonts and can show as missing-glyph boxes
         // on Linux, unlike the rest of this app's buttons (all plain text).
-        JButton txtFileBtn = new JButton("文本文件 (.txt)");
+        JButton txtFileBtn = new JButton(I18n.get("import_txt_btn"));
         txtFileBtn.setFont(theme.displayFont(Font.PLAIN, 11f));
         txtFileBtn.setAlignmentX(LEFT_ALIGNMENT);
         txtFileBtn.setMaximumSize(new Dimension(200, 28));
@@ -116,7 +134,7 @@ public class ImportDialog extends JDialog {
         rightPanel.add(txtFileBtn);
         rightPanel.add(Box.createVerticalStrut(4));
 
-        JButton swaggerBtn = new JButton("Swagger / OpenAPI");
+        JButton swaggerBtn = new JButton(I18n.get("import_swagger_btn"));
         swaggerBtn.setFont(theme.displayFont(Font.PLAIN, 11f));
         swaggerBtn.setAlignmentX(LEFT_ALIGNMENT);
         swaggerBtn.setMaximumSize(new Dimension(200, 28));
@@ -147,7 +165,7 @@ public class ImportDialog extends JDialog {
             dispose();
         });
 
-        JButton cancelBtn = new JButton("取消");
+        JButton cancelBtn = new JButton(I18n.get("import_cancel"));
         cancelBtn.setFont(theme.displayFont(Font.PLAIN, 12f));
         cancelBtn.addActionListener(e -> dispose());
 
@@ -206,16 +224,16 @@ public class ImportDialog extends JDialog {
      */
     private void importFromTextFile() {
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("选择 API 列表文件");
-        chooser.setFileFilter(new FileNameExtensionFilter("文本文件 (*.txt)", "txt"));
-        chooser.addChoosableFileFilter(new FileNameExtensionFilter("所有支持的格式", "txt", "csv"));
+        chooser.setDialogTitle(I18n.get("import_choose_txt"));
+        chooser.setFileFilter(new FileNameExtensionFilter(I18n.get("import_filter_txt"), "txt"));
+        chooser.addChoosableFileFilter(new FileNameExtensionFilter(I18n.get("import_filter_all"), "txt", "csv"));
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
             try {
                 String content = Files.readString(chooser.getSelectedFile().toPath());
                 textArea.setText(content);
                 textArea.setCaretPosition(0);
             } catch (IOException ex) {
-                ThemedDialogs.error(this, "读取文件失败: " + ex.getMessage(), "错误");
+                ThemedDialogs.error(this, I18n.get("import_read_err") + ex.getMessage(), I18n.get("import_err_title"));
             }
         }
     }
@@ -225,9 +243,9 @@ public class ImportDialog extends JDialog {
      */
     private void importFromSwagger() {
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("选择 Swagger / OpenAPI 文件");
+        chooser.setDialogTitle(I18n.get("import_choose_swagger"));
         chooser.setFileFilter(new FileNameExtensionFilter(
-            "Swagger/OpenAPI (*.json, *.yaml, *.yml)", "json", "yaml", "yml"));
+            I18n.get("import_filter_swagger"), "json", "yaml", "yml"));
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
             try {
                 Path file = chooser.getSelectedFile().toPath();
@@ -235,15 +253,15 @@ public class ImportDialog extends JDialog {
 
                 if (endpoints.isEmpty()) {
                     ThemedDialogs.warn(this,
-                        "未在文件中找到任何 API 端点。\n请确认这是有效的 Swagger 2.0 或 OpenAPI 3.0 文档。",
-                        "解析结果");
+                        I18n.get("import_swagger_empty"),
+                        I18n.get("import_swagger_empty_title"));
                     return;
                 }
 
                 // Build text representation for the textArea
                 StringBuilder sb = new StringBuilder();
-                sb.append("# Imported from: ").append(file.getFileName()).append("\n");
-                sb.append("# Found ").append(endpoints.size()).append(" endpoints\n\n");
+                sb.append(I18n.get("import_comment_from")).append(file.getFileName()).append("\n");
+                sb.append(String.format(I18n.get("import_comment_found"), endpoints.size())).append("\n\n");
                 for (SwaggerImporter.ApiEndpoint ep : endpoints) {
                     sb.append(ep.method()).append(" ").append(ep.path());
                     if (ep.summary() != null && !ep.summary().isEmpty()) {
@@ -256,12 +274,11 @@ public class ImportDialog extends JDialog {
                 textArea.setCaretPosition(0);
 
                 ThemedDialogs.info(this,
-                    String.format("已解析 %d 个 API 端点，请确认后点击「导入」按钮。",
-                        endpoints.size()),
-                    "Swagger 导入");
+                    String.format(I18n.get("import_swagger_ok"), endpoints.size()),
+                    I18n.get("import_swagger_ok_title"));
 
             } catch (Exception ex) {
-                ThemedDialogs.error(this, "解析 Swagger 文件失败: " + ex.getMessage(), "错误");
+                ThemedDialogs.error(this, I18n.get("import_swagger_err") + ex.getMessage(), I18n.get("import_err_title"));
             }
         }
     }

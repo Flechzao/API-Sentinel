@@ -24,6 +24,9 @@ public class FindDefinitionTool implements AgentTool {
     }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "查找一个类名或方法名的定义位置（源文件+行号）。当你从代码中看到一个被调用的类/方法但不知道在哪个文件定义时使用。免费。";
     }

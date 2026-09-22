@@ -81,7 +81,10 @@ public class GeneratePayloadsTool implements AgentTool {
     @Override
     public String execute(String argumentsJson) {
         var entry = ctx.entry();
-        TestCaseService service = new TestCaseService(ctx.provider(), ctx.logger());
+        // Cost tiering: payload generation is enumerative — route it to the
+        // low-cost model when tiering is enabled (bad payloads are caught by the
+        // downstream verification/anti-hallucination gate).
+        TestCaseService service = new TestCaseService(ctx.provider(), ctx.logger(), ctx.cheapModelOverride());
 
         String method = entry.getHttpMethod() != null ? entry.getHttpMethod() : "GET";
         String path = entry.getApiPath();
@@ -107,7 +110,7 @@ public class GeneratePayloadsTool implements AgentTool {
 
         try {
             var result = service.generateDetailed(method, path, host, params, "", knownFindings)
-                    .get(200, TimeUnit.SECONDS);
+                    .get(600, TimeUnit.SECONDS);
 
             lastBatchCases = new ArrayList<>();
             if (result.cases() != null) lastBatchCases.addAll(result.cases());

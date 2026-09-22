@@ -11,6 +11,7 @@ import com.flechazo.apisentinel.util.HttpMessageUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -113,9 +114,13 @@ public class BusinessLogicVerifier {
             Sent s = send(entry, mutated);
             if (s == null) continue;
             if (s.status >= 200 && s.status < 300) {
+                // Validate that the response body actually reflects the tampered
+                // value — a 200 with "validation failed" is a false positive.
+                String respBody = HttpMessageUtils.bodyOf(s.rawResponse);
+                boolean valueReflected = respBody != null && (respBody.contains(v) || respBody.contains(paramName));
                 return new LogicFlawResult(true, type,
                         paramName + "=" + v + " 被接受（响应 " + s.status + "，原值 " + original
-                      + "）——" + flaw + "，请人工确认业务影响",
+                      + "）——" + flaw + (valueReflected ? "（响应体包含篡改值，确认已接受）" : "（响应体未直接反映篡改值，需人工确认）"),
                         mutated, s.rawResponse, s.status);
             }
         }
@@ -175,11 +180,19 @@ public class BusinessLogicVerifier {
         int n = Math.max(2, Math.min(count, 10));
         String raw = entry.getLastRawRequest();
         ExecutorService pool = Executors.newFixedThreadPool(n);
+        // Use a CountDownLatch barrier so all threads fire simultaneously,
+        // maximizing the chance of hitting the race window.
+        CountDownLatch startGate = new CountDownLatch(1);
         try {
             List<Future<Sent>> futures = new ArrayList<>();
             for (int i = 0; i < n; i++) {
-                futures.add(pool.submit(() -> send(entry, raw)));
+                futures.add(pool.submit(() -> {
+                    startGate.await(5, TimeUnit.SECONDS); // all threads wait at the gate
+                    return send(entry, raw);
+                }));
             }
+            // Open the gate — all threads fire at once
+            startGate.countDown();
             int successes = 0;
             Sent last = null;
             for (Future<Sent> f : futures) {

@@ -25,12 +25,17 @@ public class SearchTrafficTool implements AgentTool {
     public String name() { return "search_traffic"; }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "Search Burp proxy history for traffic on the target domain. "
-             + "Use this to find authentication tokens, common headers, and "
-             + "parameter values from similar endpoints — especially when the "
-             + "current API has no captured traffic and you need to construct a "
-             + "request from scratch. Free, no AI cost.";
+             + "Returns matching requests WITH their auth headers AND response snippets, "
+             + "so you can mine already-captured traffic for evidence instead of replaying. "
+             + "Reason over the captured requests/responses yourself — what they reveal "
+             + "depends on the vuln class. Also reuse auth_headers/parameter values from "
+             + "similar endpoints when constructing requests for APIs that have no captured "
+             + "traffic. Free, no AI cost.";
     }
 
     @Override
@@ -113,6 +118,7 @@ public class SearchTrafficTool implements AgentTool {
                 JsonObject to = new JsonObject();
                 to.addProperty("method", t.method());
                 to.addProperty("path", t.path());
+                to.addProperty("status_code", t.statusCode());
                 to.addProperty("content_type", t.contentType());
                 JsonObject auth = new JsonObject();
                 t.authHeaders().forEach(auth::addProperty);
@@ -120,6 +126,9 @@ public class SearchTrafficTool implements AgentTool {
                 if (t.body() != null && !t.body().isEmpty()) {
                     to.addProperty("body_snippet", t.body().length() > 500
                             ? t.body().substring(0, 500) + "..." : t.body());
+                }
+                if (t.responseSnippet() != null && !t.responseSnippet().isEmpty()) {
+                    to.addProperty("response_snippet", t.responseSnippet());
                 }
                 templatesArr.add(to);
             }

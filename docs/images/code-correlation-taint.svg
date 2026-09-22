@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="1002" viewBox="0 0 880 1002" role="img" aria-labelledby="title desc">
+  <title id="title">代码关联与污点分析</title>
+  <desc id="desc">由流量端点和参数定位源码，审计危险调用，再用正则启发式从 sink 向赋值、函数参数、输入源候选后向回溯。每一跳必须读取源码核实。这不是精确数据流分析，静态关联必须交由动态验证，不能直接作为 confirmed 结论。</desc>
+  <defs>
+    <marker id="arrowBlue" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2563eb"/></marker>
+    <marker id="arrowPurple" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#7c3aed"/></marker>
+    <marker id="arrowGreen" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#10a37f"/></marker>
+    <filter id="shadowSoft" x="-10%" y="-15%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.07"/></filter>
+    <style>
+      text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .title { font-size: 26px; font-weight: 700; fill: #111827; }
+      .heading { font-size: 16px; font-weight: 700; fill: #111827; }
+      .body { font-size: 15px; fill: #475569; }
+      .label { font-size: 13px; font-weight: 500; fill: #64748b; }
+      .blue { fill: #2563eb; } .purple { fill: #7c3aed; }
+      .green { fill: #087f65; } .orange { fill: #b45309; }
+      .edge { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+      .card { fill: #ffffff; stroke-width: 1.4; filter: url(#shadowSoft); }
+    </style>
+  </defs>
+  <rect width="880" height="1002" fill="#ffffff"/>
+  <text x="440" y="44" text-anchor="middle" class="title">代码关联与污点分析</text>
+  <text x="440" y="72" text-anchor="middle" class="body">从接口线索到动态证据：静态回溯只提供可疑关联</text>
+
+  <rect x="32" y="100" width="816" height="80" rx="10" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="52" y="130" class="heading orange">正则启发式，不是精确数据流分析</text>
+  <text x="52" y="156" class="body">每一跳都要 read_file 读取源码核实；静态线索不能直接标为 confirmed。</text>
+
+  <rect x="216" y="212" width="448" height="76" rx="10" class="card" stroke="#2563eb"/>
+  <text x="236" y="241" class="heading blue">流量端点 / 参数</text>
+  <text x="236" y="265" class="body">从实际请求提取源码定位线索</text>
+  <path d="M440 288 V324" class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)"/>
+
+  <rect x="64" y="324" width="752" height="142" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-dasharray="5 5"/>
+  <text x="84" y="352" class="heading blue">源码定位</text>
+  <rect x="84" y="370" width="344" height="76" rx="10" class="card" stroke="#2563eb"/>
+  <text x="104" y="398" class="heading blue">search_source_code · grep_repo</text>
+  <text x="104" y="424" class="body">检索接口路径与参数关键字</text>
+  <rect x="452" y="370" width="344" height="76" rx="10" class="card" stroke="#2563eb"/>
+  <text x="472" y="398" class="heading blue">find_definition · find_callers</text>
+  <text x="472" y="424" class="body">定位定义，查找调用位置</text>
+  <path d="M440 466 V500" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+
+  <rect x="144" y="500" width="592" height="80" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="164" y="528" class="heading purple">危险调用 · audit_codebase</text>
+  <text x="164" y="554" class="body">枚举 SQL / 命令执行 / 文件 / 反序列化 / SSRF 等 sink</text>
+  <path d="M440 580 V614" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+
+  <rect x="32" y="614" width="816" height="204" rx="12" fill="#f5f3ff" stroke="#c4b5fd" stroke-dasharray="5 5"/>
+  <text x="52" y="644" class="heading purple">启发式后向回溯 · trace_taint_source</text>
+  <text x="52" y="668" class="body">沿变量来源寻找候选链，不保证精确调用关系或完整数据流</text>
+
+  <rect x="52" y="692" width="164" height="76" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="134" y="720" text-anchor="middle" class="heading purple">危险调用</text>
+  <text x="134" y="744" text-anchor="middle" class="body">sink</text>
+  <rect x="256" y="692" width="164" height="76" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="338" y="720" text-anchor="middle" class="heading purple">赋值来源</text>
+  <text x="338" y="744" text-anchor="middle" class="body">ASSIGNMENT</text>
+  <rect x="460" y="692" width="164" height="76" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="542" y="720" text-anchor="middle" class="heading purple">函数参数</text>
+  <text x="542" y="744" text-anchor="middle" class="body">PARAMETER</text>
+  <rect x="664" y="692" width="164" height="76" rx="10" class="card" stroke="#2563eb"/>
+  <text x="746" y="720" text-anchor="middle" class="heading blue">输入源候选</text>
+  <text x="746" y="744" text-anchor="middle" class="body">SOURCE_MATCH</text>
+  <path d="M216 730 H256" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <path d="M420 730 H460" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <path d="M624 730 H664" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <text x="52" y="795" class="body orange">逐跳核实：read_file → 检查赋值、参数与过滤逻辑</text>
+
+  <!-- The outgoing route stays to the right of the source-check note. -->
+  <path d="M746 768 V842 H236 V874" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <rect x="64" y="874" width="344" height="96" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="84" y="904" class="heading purple">可疑 source ↔ sink 关联</text>
+  <text x="84" y="930" class="body">仅为静态线索，不能直接 confirmed</text>
+  <path d="M408 922 H472" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="440" y="908" text-anchor="middle" class="label green">实测</text>
+  <rect x="472" y="874" width="344" height="96" rx="10" class="card" stroke="#10a37f"/>
+  <text x="492" y="904" class="heading green">动态验证</text>
+  <text x="492" y="930" class="body">send_request · verify_*</text>
+  <text x="492" y="952" class="body">真实请求与响应才进入证据复核</text>
+</svg>

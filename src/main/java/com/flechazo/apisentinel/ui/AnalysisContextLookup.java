@@ -47,7 +47,7 @@ class AnalysisContextLookup {
             }
             return sb.toString();
         } catch (Exception e) {
-            logger.debug("查找源码失败: %s", e.getMessage());
+            logger.warn("查找源码失败: %s", e.getMessage());
             return "";
         }
     }
@@ -100,7 +100,7 @@ class AnalysisContextLookup {
             }
             return new HistoryLookupResult(total, count, sb.toString());
         } catch (Exception e) {
-            logger.debug("获取历史流量失败: %s", e.getMessage());
+            logger.warn("获取历史流量失败: %s", e.getMessage());
             return new HistoryLookupResult(0, 0, "");
         }
     }

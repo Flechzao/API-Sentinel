@@ -1,5 +1,6 @@
 package com.flechazo.apisentinel.repository;
 
+import com.flechazo.apisentinel.config.AppPaths;
 import com.flechazo.apisentinel.logging.LeveledLogger;
 import com.flechazo.apisentinel.model.ApiEntry;
 import com.flechazo.apisentinel.model.ApiStatus;
@@ -43,7 +44,19 @@ public class PersistentApiRepository implements ApiRepository {
 
     private void flushIfDirty() {
         if (dirty.compareAndSet(true, false)) {
-            save();
+            if (!trySave()) {
+                // P0-12 hardening: pre-P0-12, compareAndSet(true, false)
+                // ran BEFORE save() so a save failure left dirty=false
+                // with no retry scheduled — the in-memory state drifted
+                // away from the on-disk state silently, and the next
+                // write attempt only re-dirtied if another mutation
+                // happened in between. A user who made one edit and
+                // then closed Burp lost the edit without any signal.
+                dirty.set(true);
+                com.flechazo.apisentinel.logging.LeveledLogger staticLogger =
+                        new com.flechazo.apisentinel.logging.LeveledLogger(null);
+                staticLogger.warn("[PersistentApiRepository] 持久化失败，已重标 dirty 等待下次重试");
+            }
         }
     }
 
@@ -131,6 +144,12 @@ public class PersistentApiRepository implements ApiRepository {
     }
 
     @Override
+    public void updateDomain(ApiEntry entry, String domain) {
+        delegate.updateDomain(entry, domain);
+        markDirty();
+    }
+
+    @Override
     public ApiEntry updatePath(String oldPath, String newPath) {
         ApiEntry updated = delegate.updatePath(oldPath, newPath);
         if (updated != null) markDirty();
@@ -162,10 +181,27 @@ public class PersistentApiRepository implements ApiRepository {
 
     @Override
     public void save() {
+        trySave();
+    }
+
+    @Override
+    public boolean trySave() {
+        return saveInternal();
+    }
+
+    /** Internal form of {@link #save()} that returns whether the write
+     *  actually succeeded. {@code flushIfDirty} consults this so it can
+     *  re-set the dirty flag on failure (P0-12). The public save() keeps
+     *  its void signature so the {@link ApiRepository} interface contract
+     *  is preserved. */
+    private boolean saveInternal() {
         try {
             Path parent = dataFilePath.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
+                // P1-5: keep the directory 700 so a non-privileged local
+                // user can't list the secrets we're about to write.
+                AppPaths.tightenDirectoryPermissions(parent);
             }
             List<ApiEntry> all = delegate.findAll();
             String json = JsonUtils.toJson(all);
@@ -181,12 +217,29 @@ public class PersistentApiRepository implements ApiRepository {
                 ch.write(java.nio.ByteBuffer.wrap(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                 ch.force(true);
             }
+            // P1-5: set 600 on the tmp file BEFORE the atomic rename, so
+            // the destination inherits owner-only perms the instant it
+            // becomes live. data.json can carry captured cookies, auth
+            // headers, and session IDs from every endpoint the user has
+            // browsed through Burp — group/other read here is a direct
+            // credential leak to any local user on the box.
+            try {
+                java.nio.file.attribute.PosixFileAttributeView view =
+                        Files.getFileAttributeView(tmpFile, java.nio.file.attribute.PosixFileAttributeView.class);
+                if (view != null) {
+                    view.setPermissions(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+                }
+            } catch (UnsupportedOperationException ignored) {
+                // Non-POSIX FS (Windows) — ACLs take over.
+            }
             Files.move(tmpFile, dataFilePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             // fsync the parent directory so the rename is durable on Linux
             fsyncDir(parent);
             logger.info("已保存 %d 条 API 数据到 %s", all.size(), dataFilePath);
+            return true;
         } catch (IOException e) {
             logger.error("保存数据失败", e);
+            return false;
         }
     }
 
@@ -221,7 +274,7 @@ public class PersistentApiRepository implements ApiRepository {
             String json = Files.readString(dataFilePath);
             List<ApiEntry> entries = JsonUtils.fromJson(json);
             delegate.addAll(entries);
-            logger.info("已加载 %d 条 API 数据", entries.size());
+            logger.debug("已加载 %d 条 API 数据", entries.size());
         } catch (Exception e) {
             logger.error("加载数据失败", e);
             try {
@@ -231,7 +284,7 @@ public class PersistentApiRepository implements ApiRepository {
                     logger.warn("已备份损坏文件到: %s", backup);
                 }
             } catch (IOException ex) {
-                logger.debug("备份文件失败: %s", ex.getMessage());
+                logger.warn("备份文件失败: %s", ex.getMessage());
             }
         }
     }

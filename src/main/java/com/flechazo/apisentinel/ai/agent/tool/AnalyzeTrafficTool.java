@@ -170,6 +170,8 @@ public class AnalyzeTrafficTool implements AgentTool {
     private String executeFullAnalysis() {
         var entry = ctx.entry();
         VulnerabilityAnalyzer analyzer = new VulnerabilityAnalyzer(ctx.provider(), ctx.logger());
+        // P1-6: propagate the raw-credentials opt-in from ToolContext.
+        analyzer.setIncludeRawCredentials(ctx.includeRawCredentials());
 
         String method = entry.getHttpMethod() != null ? entry.getHttpMethod() : "GET";
         String path = entry.getApiPath();
@@ -185,7 +187,7 @@ public class AnalyzeTrafficTool implements AgentTool {
 
         try {
             lastResult = analyzer.analyze(method, path, host, requestBody, statusCode,
-                    rawResp, path, "", "", "").get(200, TimeUnit.SECONDS);
+                    rawResp, path, "", "", "").get(600, TimeUnit.SECONDS);
 
             JsonObject result = new JsonObject();
             result.addProperty("success", lastResult.isSuccess());

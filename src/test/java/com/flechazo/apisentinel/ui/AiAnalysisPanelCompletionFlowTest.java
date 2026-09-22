@@ -98,12 +98,8 @@ class AiAnalysisPanelCompletionFlowTest {
 
         assertThat(viewJsonBtn.isVisible()).as("JSON report button visible").isTrue();
         assertThat(viewReportBtn.isVisible()).as("HTML report button visible").isTrue();
-        assertThat(bar.isVisible()).as("progress bar visible").isTrue();
-        assertThat(bar.isIndeterminate()).as("progress bar determinate").isFalse();
-        // Completion text is now a ProgressQuips line (not literally "完成");
-        // assert it settled to some non-running text instead.
-        assertThat(bar.getString()).as("progress bar settled").isNotBlank()
-                .doesNotContain("运行中");
+        assertThat(bar.isVisible()).as("progress bar hidden after completion").isFalse();
+        // Status text settled (not "运行中")
         assertThat(statusLabel.getText()).contains("完成");
     }
 
@@ -146,8 +142,7 @@ class AiAnalysisPanelCompletionFlowTest {
 
         JProgressBar bar = (JProgressBar) field(panel, "progressBar");
         JLabel statusLabel = (JLabel) field(panel, "statusLabel");
-        assertThat(bar.isVisible()).as("progress bar re-shown from history").isTrue();
-        assertThat(bar.isIndeterminate()).isFalse();
+        assertThat(bar.isVisible()).as("progress bar hidden after completion from history").isFalse();
         assertThat(statusLabel.getText()).contains("完成");
     }
 
@@ -188,8 +183,7 @@ class AiAnalysisPanelCompletionFlowTest {
         JLabel riskLabel = (JLabel) field(panel, "riskLabel");
         assertThat(statusLabel.getText()).as("settled, not 等待分析").contains("完成");
         assertThat(riskLabel.getText()).as("risk rendered").isEqualTo("MEDIUM");
-        assertThat(bar.isVisible()).isTrue();
-        assertThat(bar.isIndeterminate()).isFalse();
+        assertThat(bar.isVisible()).isFalse();
     }
 
     /** Same sequence WITHOUT the selection-clear event (row stays selected
@@ -224,9 +218,7 @@ class AiAnalysisPanelCompletionFlowTest {
         JProgressBar bar = (JProgressBar) field(panel, "progressBar");
 
         assertThat(viewReportBtn.isVisible()).as("HTML report button visible").isTrue();
-        assertThat(bar.isVisible()).as("progress bar visible").isTrue();
-        assertThat(bar.isIndeterminate()).as("progress bar determinate").isFalse();
+        assertThat(bar.isVisible()).as("progress bar hidden after completion").isFalse();
         // Completion text is a ProgressQuips line now; assert settled, not running.
-        assertThat(bar.getString()).isNotBlank().doesNotContain("运行中");
     }
 }

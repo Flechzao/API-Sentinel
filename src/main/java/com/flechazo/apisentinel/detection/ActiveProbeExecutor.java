@@ -89,6 +89,9 @@ public class ActiveProbeExecutor {
             if (isJsonAuthRequest(rawReq)) {
                 out.addAll(probeNosql(entry, rawReq));
             }
+            // Command injection probe — fires when the request has parameters
+            // that look like file names, paths, or generic string inputs
+            out.addAll(probeCommandInjection(entry, rawReq));
         } catch (Exception e) {
             if (logger != null) logger.warn("[ActiveProbe] 执行异常: %s", e.getMessage());
         }
@@ -480,5 +483,172 @@ public class ActiveProbeExecutor {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // ======================== Command Injection probe ========================
+
+    /** Command injection canaries: inject shell metacharacters + a marker
+     *  command (echo/mark), check if the marker appears in the response body.
+     *  Also includes a timing-based fallback (sleep) for blind injection. */
+    private List<PayloadResult> probeCommandInjection(ApiEntry entry, String rawReq) {
+        List<PayloadResult> results = new ArrayList<>();
+        String host = HttpMessageUtils.hostOnly(entry.getDomain());
+        String domain = entry.getDomain();
+        int port = 80;
+        boolean useHttps = domain != null && domain.startsWith("https");
+        if (domain != null && domain.contains(":")) {
+            try { port = Integer.parseInt(domain.split(":")[1]); } catch (Exception ignored) {}
+        } else {
+            port = useHttps ? 443 : 80;
+        }
+        HttpService service = HttpService.httpService(host, port, useHttps);
+
+        // Find injectable parameters in query string or JSON body
+        List<InjectableParam> params = extractInjectableParams(rawReq);
+        if (params.isEmpty()) {
+            params.add(new InjectableParam("default", "test", "query"));
+        }
+
+        // Unique marker to detect command execution
+        String marker = "ASENTINEL" + System.currentTimeMillis();
+        // Response-based canaries: ;echo MARKER  and  |echo MARKER
+        String[] canaries = {
+                ";echo " + marker,
+                "|echo " + marker,
+                "&&echo " + marker,
+                "$(echo " + marker + ")",
+                "`echo " + marker + "`"
+        };
+
+        int sent = 0;
+        for (InjectableParam param : params) {
+            if (sent >= MAX_PROBE_REQUESTS) break;
+            for (String canary : canaries) {
+                if (sent >= MAX_PROBE_REQUESTS) break;
+                String modifiedReq = injectParam(rawReq, param, canary);
+                if (modifiedReq == null) continue;
+                try {
+                    HttpRequest httpReq = HttpRequest.httpRequest(service, HttpMessageUtils.addProbeMarker(modifiedReq));
+                    HttpRequestResponse resp = api.http().sendRequest(httpReq);
+                    long start = System.currentTimeMillis();
+                    long elapsed = System.currentTimeMillis() - start;
+                    int code = resp.response() != null ? resp.response().statusCode() : 0;
+                    String body = resp.response() != null ? resp.response().bodyToString() : "";
+                    boolean hit = body.contains(marker);
+                    results.add(new PayloadResult(
+                            new TestCase("cmd_inj_" + param.name, "COMMAND_INJECTION", param.name, canary, "", "", null, "", "Shell metacharacter injection", "", "MEDIUM"),
+                            HttpMessageUtils.buildRawRequest(resp.request()),
+                            HttpMessageUtils.buildRawResponse(resp.response()),
+                            code, elapsed, hit, start, -1, null, 0));
+                    sent++;
+                    if (hit) {
+                        if (logger != null) logger.info("[ActiveProbe] 命令注入确认: %s=%s → 响应含 marker", param.name, canary);
+                        return results;  // Confirmed — no need to try more
+                    }
+                } catch (Exception e) {
+                    if (logger != null) logger.debug("[ActiveProbe] 命令注入探测失败: %s", e.getMessage());
+                }
+            }
+        }
+
+        // Timing-based fallback: inject ;sleep 3 and check if response is delayed
+        if (sent < MAX_PROBE_REQUESTS && !results.isEmpty()) {
+            long baseline = results.stream()
+                    .filter(r -> !r.anomalyDetected())
+                    .mapToLong(PayloadResult::responseTimeMs)
+                    .min().orElse(500);
+            if (baseline < 2000) {  // Only if baseline is reasonable
+                for (InjectableParam param : params) {
+                    if (sent >= MAX_PROBE_REQUESTS) break;
+                    String modifiedReq = injectParam(rawReq, param, ";sleep 3");
+                    if (modifiedReq == null) continue;
+                    try {
+                        long start = System.currentTimeMillis();
+                        HttpRequest httpReq = HttpRequest.httpRequest(service, HttpMessageUtils.addProbeMarker(modifiedReq));
+                        HttpRequestResponse resp = api.http().sendRequest(httpReq);
+                        long elapsed = System.currentTimeMillis() - start;
+                        boolean timing = elapsed > baseline + 2500;
+                        results.add(new PayloadResult(
+                                new TestCase("cmd_inj_timing_" + param.name, "COMMAND_INJECTION", param.name, ";sleep 3", "", "", null, "", "Timing-based command injection", "", "MEDIUM"),
+                                HttpMessageUtils.buildRawRequest(resp.request()),
+                                HttpMessageUtils.buildRawResponse(resp.response()),
+                                resp.response() != null ? resp.response().statusCode() : 0,
+                                elapsed, timing, start, -1, null, 0));
+                        sent++;
+                        if (timing && logger != null) {
+                            logger.info("[ActiveProbe] 命令注入时序确认: %s → %dms (baseline %dms)", param.name, elapsed, baseline);
+                        }
+                    } catch (Exception e) {
+                        if (logger != null) logger.debug("[ActiveProbe] 时序探测失败: %s", e.getMessage());
+                    }
+                    break;  // Only one timing probe needed
+                }
+            }
+        }
+
+        return results;
+    }
+
+    /** Simple injectable parameter representation. */
+    private record InjectableParam(String name, String originalValue, String location) {}
+
+    /** Extract injectable parameters from query string and JSON body. */
+    private List<InjectableParam> extractInjectableParams(String rawReq) {
+        List<InjectableParam> params = new ArrayList<>();
+        // Parse query string from the request line
+        String[] lines = rawReq.split("\r?\n");
+        if (lines.length == 0) return params;
+        String reqLine = lines[0];
+        int q = reqLine.indexOf('?');
+        if (q > 0) {
+            String query = reqLine.substring(q + 1);
+            int sp = query.indexOf(' ');
+            if (sp > 0) query = query.substring(0, sp);
+            for (String pair : query.split("&")) {
+                int eq = pair.indexOf('=');
+                if (eq > 0) {
+                    params.add(new InjectableParam(
+                            pair.substring(0, eq),
+                            pair.substring(eq + 1),
+                            "query"));
+                }
+            }
+        }
+        // Parse JSON body for string fields
+        String body = "";
+        for (String line : lines) {
+            if (line.isBlank() && body.isEmpty()) continue;
+            if (!body.isEmpty()) body += "\n" + line;
+        }
+        // Simpler: find the double-newline separator
+        int sep = rawReq.indexOf("\r\n\r\n");
+        if (sep > 0) {
+            body = rawReq.substring(sep + 4);
+            if (body.startsWith("{")) {
+                try {
+                    JsonObject json = JsonParser.parseString(body).getAsJsonObject();
+                    for (Map.Entry<String, JsonElement> e : json.entrySet()) {
+                        if (e.getValue().isJsonPrimitive() && e.getValue().getAsString().length() < 200) {
+                            params.add(new InjectableParam(e.getKey(), e.getValue().getAsString(), "json"));
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        return params;
+    }
+
+    /** Replace a parameter's value with the injected payload. */
+    private String injectParam(String rawReq, InjectableParam param, String payload) {
+        if ("query".equals(param.location)) {
+            return rawReq.replace(param.name + "=" + param.originalValue,
+                    param.name + "=" + payload);
+        } else if ("json".equals(param.location)) {
+            // Replace "key":"value" with "key":"payload"
+            String oldVal = "\"" + param.name + "\":\"" + param.originalValue + "\"";
+            String newVal = "\"" + param.name + "\":\"" + payload + "\"";
+            return rawReq.replace(oldVal, newVal);
+        }
+        return null;
     }
 }

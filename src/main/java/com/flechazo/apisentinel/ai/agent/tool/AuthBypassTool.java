@@ -70,24 +70,50 @@ public class AuthBypassTool implements AgentTool {
             SessionInfo sessionA;
             SessionInfo sessionB;
 
+            // Check manual sessions first — user-configured is more reliable
+            // than auto-discovered, and supports 3 sessions for multi-tier testing.
+            boolean useManualPairwise = false;
+            if (ctx.pipelineConfig() != null && ctx.pipelineConfig().hasManualSessions()) {
+                useManualPairwise = true;
+            }
+
+            if (useManualPairwise) {
+                // Multi-session pairwise execution (supports 2 or 3 sessions)
+                AuthTestExecutor executor = new AuthTestExecutor(ctx.montoyaApi(), ctx.provider(),
+                        ctx.pipelineConfig().aiAuthArbitrationEnabled());
+                String targetDomain = entry.getDomain() != null ? entry.getDomain() : "";
+                lastResult = executor.executePairwise(ctx.pipelineConfig().manualSessionConfigs(), targetDomain);
+
+                String text = lastResult.toPromptText();
+                if (ctx.pipelineConfig() != null) {
+                    String dir = inferPrivilegeDirection(
+                            ctx.pipelineConfig().manualSessionALabel(),
+                            ctx.pipelineConfig().manualSessionBLabel());
+                    if (dir != null) {
+                        text = "⚠ 权限方向推断: " + dir
+                                + "（若低权会话获得高权数据则为垂直越权）\n" + text;
+                    }
+                }
+                return text;
+            }
+
+            // Auto-discovery fallback: sessions that hit this exact endpoint (>=2),
+            // then sessions seen anywhere on the same domain (>=2).
             if (sessions.size() >= 2) {
                 sessions.sort((a, b) -> Integer.compare(b.getRequests().size(), a.getRequests().size()));
                 sessionA = sessions.get(0);
                 sessionB = sessions.get(1);
-            } else if (ctx.pipelineConfig() != null && ctx.pipelineConfig().hasManualSessions()) {
-                Map<String, String> cookiesA = SessionDiscovery.parseCookies(ctx.pipelineConfig().manualSessionACookie());
-                Map<String, String> cookiesB = SessionDiscovery.parseCookies(ctx.pipelineConfig().manualSessionBCookie());
-                sessionA = new SessionInfo("manual-A", cookiesA, Map.of());
-                sessionB = new SessionInfo("manual-B", cookiesB, Map.of());
-                if (!sessions.isEmpty()) {
-                    for (var req : sessions.get(0).getRequests()) sessionA.addRequest(req);
-                }
-            } else {
+            } else if (sessions.size() < 2 && entry.getDomain() != null && !entry.getDomain().isBlank()) {
+                // Already tried domain discovery above; if still < 2, give up
                 lastResult = AuthTestResult.skipped("Need at least 2 sessions for auth bypass testing");
                 return "{\"verdict\": \"SKIPPED\", \"reason\": \"Only " + sessions.size()
                      + " session(s) found on this endpoint and its domain. "
                      + "Browse the target with a second account (through the Burp proxy) so two distinct "
-                     + "sessions can be auto-discovered, or configure manual cookies in Settings → Auth Bypass.\"}";
+                     + "sessions can be auto-discovered, or configure manual sessions in Settings → Auth.\"}";
+            } else {
+                lastResult = AuthTestResult.skipped("Need at least 2 sessions for auth bypass testing");
+                return "{\"verdict\": \"SKIPPED\", \"reason\": \"Only " + sessions.size()
+                     + " session(s) found. Configure manual sessions in Settings → Auth.\"}";
             }
 
             // Step 2: Identify auth parameters

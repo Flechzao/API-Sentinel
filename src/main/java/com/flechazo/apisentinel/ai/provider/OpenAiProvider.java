@@ -228,6 +228,34 @@ public class OpenAiProvider implements LlmProvider {
                 continue;
             }
 
+            // Vision support: if the message has an image, use multimodal content format
+            if (msg.hasImage()) {
+                JsonObject m = new JsonObject();
+                m.addProperty("role", msg.role());
+                JsonArray contentArr = new JsonArray();
+
+                // Text part
+                if (msg.content() != null && !msg.content().isEmpty()) {
+                    JsonObject textPart = new JsonObject();
+                    textPart.addProperty("type", "text");
+                    textPart.addProperty("text", msg.content());
+                    contentArr.add(textPart);
+                }
+
+                // Image part
+                JsonObject imagePart = new JsonObject();
+                imagePart.addProperty("type", "image_url");
+                JsonObject imageUrl = new JsonObject();
+                String mimeType = msg.imageMimeType() != null ? msg.imageMimeType() : "image/png";
+                imageUrl.addProperty("url", "data:" + mimeType + ";base64," + msg.imageBase64());
+                imagePart.add("image_url", imageUrl);
+                contentArr.add(imagePart);
+
+                m.add("content", contentArr);
+                messages.add(m);
+                continue;
+            }
+
             JsonObject m = new JsonObject();
             m.addProperty("role", msg.role());
             m.addProperty("content", msg.content() != null ? msg.content() : "");
@@ -254,10 +282,28 @@ public class OpenAiProvider implements LlmProvider {
 
         int promptTokens = 0;
         int completionTokens = 0;
+        int cacheRead = 0;
         if (result.has("usage") && !result.get("usage").isJsonNull()) {
             JsonObject usage = result.getAsJsonObject("usage");
             if (usage.has("prompt_tokens")) promptTokens = usage.get("prompt_tokens").getAsInt();
             if (usage.has("completion_tokens")) completionTokens = usage.get("completion_tokens").getAsInt();
+            // OpenAI's automatic prompt caching reports cached tokens as a
+            // SUBSET of prompt_tokens (Anthropic, by contrast, reports them
+            // as SEPARATE fields). To keep LlmResponse.billableInputTokens()
+            // provider-agnostic (a simple sum of the three components),
+            // split prompt_tokens into the non-cached portion here and let
+            // cacheReadInputTokens carry the cached portion. The sum
+            // remains equal to the raw prompt_tokens, so the invoice total
+            // is unchanged; only the decomposition differs.
+            if (usage.has("prompt_tokens_details")
+                    && usage.get("prompt_tokens_details").isJsonObject()) {
+                JsonObject details = usage.getAsJsonObject("prompt_tokens_details");
+                if (details.has("cached_tokens")
+                        && details.get("cached_tokens").isJsonPrimitive()) {
+                    cacheRead = details.get("cached_tokens").getAsInt();
+                    promptTokens = Math.max(0, promptTokens - cacheRead);
+                }
+            }
         }
 
         String content = "";
@@ -288,46 +334,38 @@ public class OpenAiProvider implements LlmProvider {
         }
 
         return new LlmResponse(content, promptTokens, completionTokens,
-                latency, model, reason, null, toolCalls.isEmpty() ? null : toolCalls);
+                latency, model, reason, null, toolCalls.isEmpty() ? null : toolCalls,
+                null, null, 0, cacheRead);
     }
 
     private static long computeBackoffMs(HttpResponse<String> resp, int attempt) {
-        String ra = resp.headers().firstValue("retry-after").orElse(null);
-        if (ra != null) {
-            try {
-                long ms = Long.parseLong(ra.trim()) * 1000L;
-                if (ms > 0) return Math.min(ms, 30000L);
-            } catch (NumberFormatException ignored) { /* HTTP-date form */ }
-        }
-        return Math.min(2000L * (1L << attempt), 30000L);
+        return HttpRetryHelper.computeBackoffMs(resp, attempt);
     }
 
     private static String truncateBody(String body) {
-        if (body == null) return "";
-        return body.length() <= 500 ? body : body.substring(0, 500) + "...";
+        return HttpRetryHelper.truncateBody(body);
     }
 
     private static boolean isRetryable(Exception e) {
-        String msg = (e.getMessage() != null ? e.getMessage() : "").toLowerCase();
-        Throwable cause = e.getCause();
-        String causeMsg = cause != null && cause.getMessage() != null ? cause.getMessage().toLowerCase() : "";
-        return msg.contains("eof") || msg.contains("end of file")
-                || msg.contains("connection reset") || msg.contains("broken pipe")
-                || msg.contains("stream is closed") || msg.contains("premature")
-                || causeMsg.contains("eof") || causeMsg.contains("end of file")
-                || causeMsg.contains("connection reset") || causeMsg.contains("broken pipe")
-                || causeMsg.contains("stream is closed") || causeMsg.contains("premature")
-                || e instanceof java.io.EOFException
-                || cause instanceof java.io.EOFException;
+        return HttpRetryHelper.isRetryable(e);
     }
 
     @Override
     public int estimateTokens(String text) {
-        return (int) (text.length() / 3.5);
+        // P0-7: delegate to the shared CJK-aware default. Pre-P0-12 this
+        // was {@code length/3.5}, which under-counted Chinese text by
+        // 1.7–2.5× and caused the agent to blow past the model's context
+        // window on CJK analyses.
+        return LlmProvider.estimateTokensDefault(text);
     }
 
     @Override
     public boolean isAvailable() {
         return apiKey != null && !apiKey.isBlank();
+    }
+
+    @Override
+    public void close() {
+        HttpRetryHelper.closeHttpClient(httpClient);
     }
 }

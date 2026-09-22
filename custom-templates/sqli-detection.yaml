@@ -1,0 +1,21 @@
+# Custom SQL Injection Detection
+id: custom-sqli-detection
+name: Custom SQL Injection Detection
+severity: critical
+type: response-pattern
+
+description: Detects SQL injection vulnerabilities through error messages and database fingerprints
+remediation: Use parameterized queries/prepared statements. Never concatenate user input into SQL.
+
+matchers:
+  - type: regex
+    pattern: "(?i)(SQL syntax|mysql_fetch|mysqli|ORA-\\d{5}|PostgreSQL.*ERROR)"
+    condition: or
+    part: body
+
+  - type: word
+    words: ["syntax error", "mysql error", "unclosed quotation mark", "SQLSTATE"]
+    condition: or
+    part: body
+
+tags: sqli, injection, owasp-a03, critical

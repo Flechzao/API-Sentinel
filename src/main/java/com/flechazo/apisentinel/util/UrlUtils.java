@@ -23,6 +23,18 @@ public final class UrlUtils {
         }
     }
 
+    /**
+     * Extract the query string from a URL (everything after '?').
+     * Returns empty string if no query string is present.
+     * Used by FUZZY matching to support RPC gateway patterns where
+     * the API identity is in query params (e.g. Action=ListByocResourceGroups).
+     */
+    public static String extractQueryString(String url) {
+        if (url == null) return "";
+        int qIdx = url.indexOf('?');
+        return qIdx < 0 ? "" : url.substring(qIdx + 1);
+    }
+
     public static String extractHost(String url) {
         try {
             URI uri = URI.create(url);

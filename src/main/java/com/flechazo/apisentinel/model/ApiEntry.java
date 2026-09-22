@@ -97,6 +97,20 @@ public class ApiEntry {
         httpMethod = httpMethod + "/" + method;
     }
 
+    /** True when this entry's (possibly multi-valued "POST/GET") method list
+     *  already includes {@code method}. Checked directly against the field so
+     *  callers can short-circuit the stale pathIndex after appendHttpMethod
+     *  (which doesn't re-index) and avoid creating a duplicate entry. */
+    public synchronized boolean hasMethod(String method) {
+        if (method == null || method.isEmpty() || httpMethod == null || httpMethod.isEmpty()) {
+            return false;
+        }
+        for (String m : httpMethod.split("/")) {
+            if (m.equalsIgnoreCase(method)) return true;
+        }
+        return false;
+    }
+
     public synchronized ApiStatus getStatus() { return status; }
     public synchronized VulnType getVulnType() { return vulnType; }
     public synchronized String getResult() { return result; }

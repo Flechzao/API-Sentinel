@@ -45,7 +45,36 @@ public class VulnAnalysisPrompt {
         return SYSTEM_PROMPT;
     }
 
+    /** P1-2: nonce-aware form of {@link #getSystemPrompt()}. Bakes the
+     *  {@link UntrustedContent#fenceInstruction()} into the prompt so the
+     *  model sees the same nonce it sees in the user-message markers —
+     *  without this alignment, the attacker could emit a close marker
+     *  with a guessed nonce and the model wouldn't notice the mismatch. */
+    public static String getSystemPrompt(UntrustedContent untrusted) {
+        return SYSTEM_PROMPT + "\n\n" + untrusted.fenceInstruction();
+    }
+
     public static String buildUserPrompt(String method, String path, String host,
+                                          String requestBody, int statusCode,
+                                          String responseBody, String apiPath,
+                                          String parameters, String sourceCode,
+                                          String trafficContext) {
+        // Backward-compatible overload: mints a one-shot UntrustedContent
+        // so the old call site keeps working with the nonce-based fence.
+        // Callers that share the nonce with the system prompt (e.g.
+        // VulnerabilityAnalyzer) should prefer the overload that takes
+        // an explicit UntrustedContent.
+        return buildUserPrompt(UntrustedContent.forRun(),
+                method, path, host, requestBody, statusCode, responseBody,
+                apiPath, parameters, sourceCode, trafficContext);
+    }
+
+    /** P1-2: nonce-aware form. Both the HTTP traffic block AND the
+     *  source-code block (when present) AND the traffic-context block
+     *  are wrapped with the same nonce, so a forged close marker in
+     *  any of them can't leak trusted context. */
+    public static String buildUserPrompt(UntrustedContent untrusted,
+                                          String method, String path, String host,
                                           String requestBody, int statusCode,
                                           String responseBody, String apiPath,
                                           String parameters, String sourceCode,
@@ -55,12 +84,11 @@ public class VulnAnalysisPrompt {
 
         StringBuilder sb = new StringBuilder();
         sb.append("## 任务\n分析以下 HTTP 请求/响应是否存在安全漏洞。\n\n");
-        sb.append("=== UNTRUSTED HTTP DATA START ===\n");
-        sb.append("## HTTP 请求\n```\n");
-        sb.append(truncatedBody).append("\n```\n\n");
-        sb.append("## HTTP 响应 (状态码: ").append(statusCode).append(")\n```\n");
-        sb.append(truncatedResponse).append("\n```\n");
-        sb.append("=== UNTRUSTED HTTP DATA END ===\n\n");
+        sb.append(untrusted.wrap("HTTP traffic",
+                "## HTTP 请求\n```\n" + truncatedBody + "\n```\n\n"
+              + "## HTTP 响应 (状态码: " + statusCode + ")\n```\n"
+              + truncatedResponse + "\n```\n"));
+        sb.append("\n\n");
         sb.append("## API 上下文\n");
         sb.append("- 接口路径: ").append(apiPath).append("\n");
         sb.append("- 请求方法: ").append(method).append("\n");
@@ -68,11 +96,13 @@ public class VulnAnalysisPrompt {
         sb.append("- 观察到的参数: ").append(parameters.isEmpty() ? "无" : parameters).append("\n\n");
 
         if (sourceCode != null && !sourceCode.isEmpty()) {
-            sb.append("## 关联源码\n```\n").append(truncate(sourceCode, 2000)).append("\n```\n\n");
+            sb.append("## 关联源码\n")
+              .append(untrusted.wrap("source code", truncate(sourceCode, 2000)))
+              .append("\n\n");
         }
 
         if (trafficContext != null && !trafficContext.isEmpty()) {
-            sb.append(trafficContext);
+            sb.append(untrusted.wrap("traffic context", trafficContext));
         }
 
         sb.append("""

@@ -30,6 +30,12 @@ public class AnalysisTaskQueue {
     private final TokenBudgetManager budgetManager;
     private final EventBus eventBus;
     private final LeveledLogger logger;
+    /** P2-1: learned-rule engine for pre-LLM triage. When non-null, the
+     *  worker loop checks learned rules BEFORE making an LLM call. A
+     *  high-confidence rule match produces a SAFE verdict without
+     *  spending any tokens — the LLM is only called for endpoints
+     *  that don't match any learned rule. */
+    private com.flechazo.apisentinel.ai.rules.LearnedRuleEngine learnedRuleEngine;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final AtomicBoolean paused = new AtomicBoolean(false);
     private volatile String activeProviderId = "ollama";
@@ -132,6 +138,14 @@ public class AnalysisTaskQueue {
 
     public void setActiveProvider(String providerId) {
         this.activeProviderId = providerId;
+    }
+
+    /** P2-1: set the learned-rule engine for pre-LLM triage. When set,
+     *  the worker loop checks learned rules BEFORE making an LLM call.
+     *  High-confidence rule matches produce a SAFE verdict without
+     *  spending any tokens. */
+    public void setLearnedRuleEngine(com.flechazo.apisentinel.ai.rules.LearnedRuleEngine engine) {
+        this.learnedRuleEngine = engine;
     }
 
     public int getPendingCount() {
@@ -259,8 +273,40 @@ public class AnalysisTaskQueue {
                 VulnerabilityAnalyzer analyzer = new VulnerabilityAnalyzer(provider, logger);
                 String params = extractParameters(task.requestBody(), task.url());
 
+                // P2-1: pre-LLM triage via learned rules. If a high-confidence
+                // rule matches, produce a SAFE verdict WITHOUT calling the LLM.
+                // This saves ~$0.05/endpoint for known-safe patterns (e.g.
+                // "this API always returns 404 for non-existent IDs").
                 AnalysisResult result = null;
+                if (learnedRuleEngine != null && learnedRuleEngine.getRuleCount() > 0) {
+                    try {
+                        var matched = learnedRuleEngine.checkRules(
+                                task.requestBody(), task.responseBody());
+                        if (!matched.isEmpty()) {
+                            // Only auto-SAFE when ALL matched rules say "safe"
+                            // (some rules might be "always vulnerable" — those
+                            // should still go to the LLM for full analysis).
+                            boolean allSafe = matched.stream()
+                                    .allMatch(r -> "SAFE".equalsIgnoreCase(r.getRiskLevel()));
+                            if (allSafe) {
+                                result = new AnalysisResult(
+                                        List.of(),
+                                        "Learned rule matched (safe): "
+                                                + matched.stream().map(r -> r.getName())
+                                                        .reduce((a, b) -> a + ", " + b).orElse(""),
+                                        AnalysisResult.RiskLevel.NONE, 0, 0, "", null);
+                                logger.info("[Queue] 跳过 LLM 调用（learned rule 命中 SAFE）: %s",
+                                        task.entry().getApiPath());
+                            }
+                        }
+                    } catch (Exception e) {
+                        // Rule check failure is non-fatal — fall through to LLM.
+                        logger.warn("[Queue] learned rule check 异常: %s", e.getMessage());
+                    }
+                }
+
                 Exception failure = null;
+                if (result == null) {
                 // Retry transient failures (timeouts, network blips) inline so the
                 // TaskRecord stays continuous. Budget-exhaustion is checked at
                 // submit time and is not retried.
@@ -285,6 +331,7 @@ public class AnalysisTaskQueue {
                         failure = ex;
                     }
                 }
+                } // end if (result == null)
 
                 if (result != null) {
                     budgetManager.recordUsage(activeProviderId, result.tokensUsed());

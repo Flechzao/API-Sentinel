@@ -54,6 +54,15 @@ public interface ApiRepository {
     void updateDomain(String apiPath, String domain);
 
     /**
+     * Update domain for a specific entry by reference. Use this when you
+     * already hold the ApiEntry object (e.g. from table selection) — the
+     * path-based {@link #updateDomain(String, String)} only finds the first
+     * entry matching a path and silently skips others with the same path
+     * but different HTTP method (e.g. GET /api/users and POST /api/users).
+     */
+    void updateDomain(ApiEntry entry, String domain);
+
+    /**
      * Replace an entry's path (its identity key) with a new one, preserving
      * all other fields. Re-indexes path + domain indexes. Returns the new
      * entry, or null if oldPath not found / newPath already exists.
@@ -69,6 +78,17 @@ public interface ApiRepository {
     void moveTestedToTop();
 
     void save();
+
+    /** P0-12 #6: explicit-success form of {@link #save}. Pre-P0-12, the
+     *  {@code save()} signature was {@code void}, so a caller could never
+     *  tell a disk-full / read-only / permission-denied failure apart
+     *  from a successful write — the failure was logged internally and
+     *  the caller carried on as if the state was durable. With this
+     *  method the caller gets a boolean and can decide to retry, surface
+     *  the error, or re-mark the repository dirty. The {@link #save()}
+     *  form is retained for backward compatibility with legacy call
+     *  sites that genuinely don't care about the outcome. */
+    boolean trySave();
 
     /**
      * Mark the repository as having unsaved changes (analysis records added to

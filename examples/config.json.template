@@ -1,0 +1,48 @@
+{
+  "_comment": "API Sentinel 主配置模板",
+  "_usage": "复制此文件到 ~/.api-sentinel/config.json 并根据需要调整",
+  
+  "matchMode": "EXACT",
+  "enablePassiveDetection": true,
+  "enableSensitiveInfoDetection": true,
+  "enableAuthBypassCheck": true,
+  "enableOOB": false,
+  "oobMode": "collaborator",
+  "oobBaseDomain": "",
+  "oobTestUrl": "",
+  
+  "mcpServerEnabled": true,
+  "mcpServerPort": 9877,
+  "mcpAllowActiveTools": false,
+  
+  "codeRepos": [],
+  
+  "contextWindowTokens": 150000,
+  "dailyBudgetTokens": 500000,
+  "perRequestMaxTokens": 50000,
+  "budgetMode": "ENFORCE",
+  
+  "analysisReuseWindowMinutes": 30,
+  "concurrentAnalysisLimit": 2,
+  "maxAgentIterations": 50,
+  
+  "includeRawCredentialsInLlm": false,
+  
+  "browserFrontendUrl": "",
+  "browserEnabled": false,
+  
+  "_matchMode_notes": {
+    "EXACT": "精确匹配（默认）：支持 {id} 占位符 + 动态段识别",
+    "FUZZY": "模糊匹配：Aho-Corasick 字面子串搜索，不识别占位符"
+  },
+  
+  "_oobMode_notes": {
+    "collaborator": "Burp Collaborator（需要 Burp Professional）",
+    "internal": "内部 dnslog 平台（需配置 oobBaseDomain）"
+  },
+  
+  "_budgetMode_notes": {
+    "ENFORCE": "预算超限时拦截 LLM 调用",
+    "MONITOR_ONLY": "只记录消耗，不拦截（适合内部模型）"
+  }
+}

@@ -1,0 +1,10 @@
+# Bambda domain exclusion list
+# Copy to ~/.api-sentinel/bambda-domains.txt and customize
+# Format: comma-separated, wildcards allowed (*.)
+#
+# Example:
+# *.internal.company.com,analytics.example.com,telemetry.example.com
+#
+# Common browser/CDN noise is built-in as default when this file is absent.
+
+detectportal.firefox.com,getpocket.cdn.mozilla.net,safebrowsing.googleapis.com,www.google-analytics.com,hm.baidu.com

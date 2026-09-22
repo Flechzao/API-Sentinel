@@ -22,7 +22,6 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.BiConsumer;
 
 /**
  * Dialog that shows all Proxy History items matching a given API entry.
@@ -45,8 +44,8 @@ public class HistoryTrafficDialog extends JDialog {
     /** Cached matched history items (parallel to table rows). */
     private final List<ProxyHttpRequestResponse> matchedItems = new ArrayList<>();
 
-    /** Callback to push extracted Cookie into AuthConfigPanel: (slot, cookie) → void. */
-    private BiConsumer<String, String> onExtractSession;
+    /** Callback to push extracted credentials into AuthConfigPanel: (slot, credentials) → void. */
+    private java.util.function.BiConsumer<String, com.flechazo.apisentinel.auth.SessionCredentials> onExtractSession;
 
     public HistoryTrafficDialog(Window owner, MontoyaApi api, ApiEntry entry) {
         super(owner, "历史流量 — " + entry.getHttpMethod() + " " + entry.getApiPath(),
@@ -222,8 +221,8 @@ public class HistoryTrafficDialog extends JDialog {
         scanHistoryForEntry(entry);
     }
 
-    /** Set callback for extracting session cookies from traffic. */
-    public void setOnExtractSession(BiConsumer<String, String> callback) {
+    /** Set callback for extracting session credentials from traffic. */
+    public void setOnExtractSession(java.util.function.BiConsumer<String, com.flechazo.apisentinel.auth.SessionCredentials> callback) {
         this.onExtractSession = callback;
     }
 
@@ -253,27 +252,39 @@ public class HistoryTrafficDialog extends JDialog {
     private void extractSessionFromRow(int row, String slot) {
         if (row < 0 || row >= matchedItems.size()) return;
         ProxyHttpRequestResponse item = matchedItems.get(row);
-        String cookie = extractCookieFromItem(item);
-        if (cookie == null || cookie.isBlank()) {
-            statusLabel.setText("该请求没有 Cookie");
+        com.flechazo.apisentinel.auth.SessionCredentials creds = extractCredentialsFromItem(item);
+        if (creds.isEmpty()) {
+            statusLabel.setText("该请求没有认证信息（Cookie 或 Auth 头）");
             statusLabel.setForeground(theme.statusPending());
             return;
         }
         if (onExtractSession != null) {
-            onExtractSession.accept(slot, cookie);
+            onExtractSession.accept(slot, creds);
         }
-        statusLabel.setText("已提取到会话 " + slot);
+        statusLabel.setText("已提取到会话 " + slot + " — " + creds.preview());
         statusLabel.setForeground(theme.statusOk());
     }
 
-    private String extractCookieFromItem(ProxyHttpRequestResponse item) {
-        if (item == null || item.finalRequest() == null) return null;
+    /**
+     * Extract both Cookie and non-Cookie auth headers from a request into
+     * a unified credential bundle. Pre-rework this only looked for the
+     * Cookie header, so Bearer-token requests returned null and the UI
+     * showed "该请求没有 Cookie".
+     */
+    private com.flechazo.apisentinel.auth.SessionCredentials extractCredentialsFromItem(ProxyHttpRequestResponse item) {
+        if (item == null || item.finalRequest() == null) return com.flechazo.apisentinel.auth.SessionCredentials.EMPTY;
+        java.util.Map<String, String> cookies = new java.util.LinkedHashMap<>();
+        java.util.Map<String, String> authHeaders = new java.util.LinkedHashMap<>();
         for (var header : item.finalRequest().headers()) {
-            if ("cookie".equalsIgnoreCase(header.name())) {
-                return header.value();
+            String name = header.name();
+            String lower = name.toLowerCase();
+            if ("cookie".equals(lower)) {
+                cookies.putAll(com.flechazo.apisentinel.auth.SessionDiscovery.parseCookies(header.value()));
+            } else if (com.flechazo.apisentinel.util.AuthHeaders.isAuthHeader(lower) && !"cookie".equals(lower)) {
+                authHeaders.put(name, header.value());
             }
         }
-        return null;
+        return new com.flechazo.apisentinel.auth.SessionCredentials(cookies, authHeaders);
     }
 
     /**
@@ -293,7 +304,21 @@ public class HistoryTrafficDialog extends JDialog {
                         String urlPath = UrlUtils.extractPath(url);
                         if (UrlUtils.isStaticResource(urlPath)) continue;
 
-                        if (UrlUtils.pathsLikelyMatch(entry.getApiPath(), urlPath)) {
+                        // RPC-gateway entries store the action name (e.g.
+                        // getDataservicePeeringReferencedProjects) as apiPath,
+                        // not a real URL path — the real identity lives in the
+                        // query string (InnerAction=...). pathsLikelyMatch
+                        // against the gateway path /api/v1/v3/api/ never hits,
+                        // so the history dialog showed empty. Fall back to a
+                        // case-insensitive substring match of apiPath against
+                        // the FULL url (incl. query) for bare-name entries
+                        // (no leading slash). Real REST paths (leading /) keep
+                        // the original path-based match unchanged.
+                        String apiPathLower = entry.getApiPath() == null ? "" : entry.getApiPath().toLowerCase();
+                        boolean rpcNameMatch = !apiPathLower.isEmpty()
+                                && !apiPathLower.startsWith("/")
+                                && url.toLowerCase().contains(apiPathLower);
+                        if (UrlUtils.pathsLikelyMatch(entry.getApiPath(), urlPath) || rpcNameMatch) {
                             String method = item.finalRequest().method();
                             if ("OPTIONS".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)) continue;
                             seq++;

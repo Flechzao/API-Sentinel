@@ -39,6 +39,9 @@ public class GrepRepoTool implements AgentTool {
     public String name() { return "grep_repo"; }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "Search all indexed source code repositories for a regex pattern — e.g. find a "
              + "security filter/interceptor chain, all callers of a DAO method, or a config key. "
@@ -134,14 +137,28 @@ public class GrepRepoTool implements AgentTool {
         try {
             int flags = caseInsensitive ? Pattern.CASE_INSENSITIVE : 0;
             if (multiline) flags |= Pattern.DOTALL;
-            pattern = Pattern.compile(patternStr, flags);
+            // P2-9: ReDoS guard — reject nested quantifiers before
+            // compiling, so an adversarial pattern can't hang the agent.
+            pattern = com.flechazo.apisentinel.util.RegexSafety.safeCompile(patternStr, flags);
         } catch (PatternSyntaxException e) {
             return "{\"error\": \"invalid regex: " + escapeJson(e.getMessage()) + "\"}";
         }
 
-        List<RepoGrepper.GrepMatch> matches = RepoGrepper.search(
+        RepoGrepper.GrepOutcome outcome = RepoGrepper.searchEx(
                 reposForCurrentDomain(), pattern, pathGlob, maxResults, contextLines, multiline);
 
+        // P0-12 hardening: surface repo-unavailability explicitly so the
+        // LLM sees "I couldn't read the repo" rather than "match_count: 0"
+        // — the latter looks like a clean bill of health and drives the
+        // agent to conclude "this code has no such sink" when the truth
+        // is "we had no access to check".
+        if (!outcome.isAvailable()) {
+            return "{\"error\": \"repo_unavailable — " + escapeJson(outcome.unavailableReason())
+                    + ". Re-check the repository path and permissions in Settings → Code Repos. "
+                    + "Do NOT conclude that the sink is absent; the search simply couldn't run.\"}";
+        }
+
+        List<RepoGrepper.GrepMatch> matches = outcome.matches();
         JsonObject result = new JsonObject();
         result.addProperty("pattern", patternStr);
         result.addProperty("match_count", matches.size());

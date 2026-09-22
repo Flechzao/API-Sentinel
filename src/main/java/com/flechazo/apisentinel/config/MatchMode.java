@@ -2,10 +2,7 @@ package com.flechazo.apisentinel.config;
 
 public enum MatchMode {
     EXACT("match_exact_mode", "精确匹配", "Exact"),
-    FUZZY("match_fuzzy_mode", "模糊匹配", "Fuzzy"),
-
-    @Deprecated SEMI_EXACT("match_exact_mode", "精确匹配", "Exact"),
-    @Deprecated AI_SMART("match_exact_mode", "精确匹配", "Exact");
+    FUZZY("match_fuzzy_mode", "模糊匹配", "Fuzzy");
 
     private final String i18nKey;
     private final String zh;
@@ -27,7 +24,7 @@ public enum MatchMode {
 
     public MatchMode normalize() {
         return switch (this) {
-            case EXACT, SEMI_EXACT, AI_SMART -> EXACT;
+            case EXACT -> EXACT;
             case FUZZY -> FUZZY;
         };
     }

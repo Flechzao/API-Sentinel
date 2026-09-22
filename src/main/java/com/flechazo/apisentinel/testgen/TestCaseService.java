@@ -2,6 +2,7 @@ package com.flechazo.apisentinel.testgen;
 
 import com.flechazo.apisentinel.ai.analysis.VulnFinding;
 import com.flechazo.apisentinel.ai.prompt.TestGenPrompt;
+import com.flechazo.apisentinel.ai.prompt.UntrustedContent;
 import com.flechazo.apisentinel.ai.provider.LlmProvider;
 import com.flechazo.apisentinel.ai.provider.LlmRequest;
 import com.flechazo.apisentinel.ai.provider.LlmResponse;
@@ -18,11 +19,19 @@ public class TestCaseService {
 
     private final LlmProvider provider;
     private final LeveledLogger logger;
+    /** Optional low-cost model override for payload generation (cost tiering).
+     *  Null/blank = use the provider's main model. */
+    private final String modelOverride;
     private static final Gson GSON = new Gson();
 
     public TestCaseService(LlmProvider provider, LeveledLogger logger) {
+        this(provider, logger, null);
+    }
+
+    public TestCaseService(LlmProvider provider, LeveledLogger logger, String modelOverride) {
         this.provider = provider;
         this.logger = logger;
+        this.modelOverride = modelOverride;
     }
 
     /**
@@ -60,8 +69,14 @@ public class TestCaseService {
                                                               String host, String parameters,
                                                               String sourceCode,
                                                               List<VulnFinding> stage1Findings) {
-        String systemPrompt = TestGenPrompt.getSystemPrompt();
-        String userPrompt = TestGenPrompt.buildUserPrompt(method, path, host, parameters, sourceCode, stage1Findings);
+        // P2-4: mint one nonce fence for the Stage-3 run; system prompt's
+        // fence instruction and the user prompt's attacker-controlled blocks
+        // (parameters, Stage-1 findings evidence, source code) share it so a
+        // Stage-1 evidence snippet that quoted target-response bytes can't
+        // re-inject into payload generation.
+        UntrustedContent fence = UntrustedContent.forRun();
+        String systemPrompt = TestGenPrompt.getSystemPrompt(fence);
+        String userPrompt = TestGenPrompt.buildUserPrompt(fence, method, path, host, parameters, sourceCode, stage1Findings);
 
         // 4096 was tight enough that generating the requested 2-5 test cases
         // (11 fields each) sometimes left the last one or two with visibly
@@ -72,6 +87,9 @@ public class TestCaseService {
         // trailing entries with empty-ish placeholder values. 8192 matches
         // AgentLoop's own per-turn budget, giving real headroom.
         LlmRequest request = new LlmRequest(systemPrompt, userPrompt, 8192);
+        if (modelOverride != null && !modelOverride.isBlank()) {
+            request = request.withModelOverride(modelOverride);
+        }
 
         return provider.complete(request).thenApply(response -> {
             if (!response.isSuccess()) {

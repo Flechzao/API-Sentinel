@@ -30,6 +30,9 @@ public class ReadFileTool implements AgentTool {
     public String name() { return "read_file"; }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "Read a file from an indexed source code repository by path, optionally a specific "
              + "line range. Use this when search_source_code's snippet is too narrow — e.g. to open "

@@ -27,6 +27,9 @@ public class FindCallersTool implements AgentTool {
     }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "查找一个方法的所有调用处（call sites），排除定义本身。用于评估某个方法的调用面、找到入口链路。免费。";
     }

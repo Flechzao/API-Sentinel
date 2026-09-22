@@ -55,9 +55,15 @@ class CompositeMatchEngineTest {
         assertEquals(r1, r2);
     }
 
+    // NOTE: MatchMode.SEMI_EXACT was removed (ConfigManager now normalizes the
+    // legacy value to EXACT). The body-agnostic caching this test asserted was
+    // a SEMI_EXACT behaviour that no longer exists, so the test is disabled
+    // rather than silently repurposed. Re-enable if a body-ignoring match mode
+    // is reintroduced.
+    @org.junit.jupiter.api.Disabled("SEMI_EXACT match mode was removed; see MatchMode.normalize()")
     @Test
     void semiExactMode_cacheKeyIgnoresBody() {
-        configManager.getConfig().setMatchMode(MatchMode.SEMI_EXACT);
+        configManager.getConfig().setMatchMode(MatchMode.EXACT);
         engine.addEntry(new ApiEntry("GET", "/api/users"));
 
         List<ApiEntry> r1 = engine.match("/api/users/123", "body1");

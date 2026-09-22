@@ -150,7 +150,7 @@ public class FileWatcherService {
                 }
             });
         } catch (IOException e) {
-            logger.debug("[FileWatcher] 注册目录失败 [%s]: %s", repo.getName(), e.getMessage());
+            logger.warn("[FileWatcher] 注册目录失败 [%s]: %s", repo.getName(), e.getMessage());
         }
     }
 

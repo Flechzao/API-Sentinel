@@ -1,0 +1,37 @@
+{
+  "_comment": "API Sentinel AI 配置模板",
+  "_usage": "复制此文件到 ~/.api-sentinel/ai-config.json 并填入真实值",
+  
+  "provider": "claude",
+  "endpoint": "https://api.anthropic.com",
+  "apiKey": "sk-ant-your-api-key-here",
+  "model": "claude-sonnet-4-20250514",
+  
+  "_alternatives": {
+    "openai": {
+      "provider": "openai",
+      "endpoint": "https://api.openai.com/v1",
+      "apiKey": "sk-your-openai-key",
+      "model": "gpt-4o"
+    },
+    "ollama": {
+      "provider": "ollama",
+      "endpoint": "http://localhost:11434/v1",
+      "apiKey": "ollama",
+      "model": "deepseek-coder-v2"
+    },
+    "deepseek": {
+      "provider": "deepseek",
+      "endpoint": "https://api.deepseek.com/v1",
+      "apiKey": "sk-your-deepseek-key",
+      "model": "deepseek-chat"
+    }
+  },
+  
+  "_notes": {
+    "provider": "可选值: claude / openai / ollama / deepseek",
+    "endpoint": "API 地址，Ollama 默认 http://localhost:11434/v1",
+    "apiKey": "API 密钥，Ollama 可填任意值",
+    "model": "模型名称，推荐 Claude Sonnet / GPT-4o / deepseek-chat"
+  }
+}

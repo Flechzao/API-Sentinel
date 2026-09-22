@@ -244,6 +244,20 @@ public class InMemoryApiRepository implements ApiRepository {
     }
 
     @Override
+    public void updateDomain(ApiEntry entry, String domain) {
+        if (entry == null) return;
+        lock.writeLock().lock();
+        try {
+            String old = entry.getDomain();
+            entry.setDomain(domain);
+            indexRemove(entry, old);
+            indexAdd(entry);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    @Override
     public ApiEntry updatePath(String oldPath, String newPath) {
         lock.writeLock().lock();
         try {
@@ -340,7 +354,17 @@ public class InMemoryApiRepository implements ApiRepository {
     }
 
     @Override
-    public void save() {}
+    public void save() {
+        trySave();
+    }
+
+    @Override
+    public boolean trySave() {
+        // In-memory repo has no persistence — "save" is a no-op that
+        // always succeeds. The return value stays honest: nothing to
+        // write can't fail to write.
+        return true;
+    }
 
     @Override
     public void load() {}

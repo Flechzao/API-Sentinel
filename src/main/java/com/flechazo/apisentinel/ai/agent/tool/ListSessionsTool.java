@@ -24,6 +24,9 @@ public class ListSessionsTool implements AgentTool {
     public String name() { return "list_sessions"; }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "List distinct authenticated sessions discovered in Burp proxy history for a domain. "
              + "Returns each session's cookie keys, auth headers and request count, so you can tell "

@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="808" viewBox="0 0 880 808" role="img" aria-labelledby="title desc">
+  <title id="title">Agent 主循环内部</title>
+  <desc id="desc">启动装配后，感知与上下文管理、LLM 思考、工具执行、观察回填构成 ReAct 循环。护栏全程约束而非后置阶段。提交通过、用户取消、达到上限或异常分别结束循环并保留已有证据。</desc>
+  <defs>
+    <marker id="arrowBlue" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2563eb"/></marker>
+    <marker id="arrowPurple" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#7c3aed"/></marker>
+    <marker id="arrowGreen" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#10a37f"/></marker>
+    <filter id="shadowSoft" x="-10%" y="-15%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.07"/></filter>
+    <style>
+      text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .title { font-size: 26px; font-weight: 700; fill: #111827; }
+      .heading { font-size: 16px; font-weight: 700; fill: #111827; }
+      .body { font-size: 15px; fill: #475569; }
+      .label { font-size: 13px; font-weight: 500; fill: #64748b; }
+      .blue { fill: #2563eb; } .purple { fill: #7c3aed; }
+      .green { fill: #087f65; } .orange { fill: #b45309; }
+      .edge { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+      .card { fill: #ffffff; stroke-width: 1.4; filter: url(#shadowSoft); }
+    </style>
+  </defs>
+  <rect width="880" height="808" fill="#ffffff"/>
+  <text x="440" y="44" text-anchor="middle" class="title">Agent 主循环内部</text>
+  <text x="440" y="72" text-anchor="middle" class="body">装配 → 感知 → 思考 → 行动 → 观察；观察结果进入下一轮</text>
+
+  <rect x="80" y="104" width="472" height="80" rx="10" class="card" stroke="#2563eb"/>
+  <text x="100" y="134" class="heading blue">启动装配</text>
+  <text x="100" y="160" class="body">System Prompt · 工具注册 · 接口与会话上下文</text>
+
+  <rect x="32" y="210" width="552" height="370" rx="12" fill="#f5f3ff" stroke="#c4b5fd" stroke-dasharray="5 5"/>
+  <text x="52" y="240" class="heading purple">ReAct 迭代循环</text>
+  <text x="52" y="264" class="body">结果追加后，重新感知</text>
+  <!-- Entry uses the open space beside the group heading. -->
+  <path d="M316 184 V276 H172 V294" class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)"/>
+
+  <rect x="64" y="294" width="216" height="96" rx="10" class="card" stroke="#2563eb"/>
+  <text x="84" y="324" class="heading blue">感知 / 上下文</text>
+  <text x="84" y="348" class="body">剥离过期 thinking</text>
+  <text x="84" y="370" class="body">分级压缩 · 优先保留证据</text>
+
+  <rect x="336" y="294" width="216" height="96" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="356" y="324" class="heading purple">LLM 思考</text>
+  <text x="356" y="348" class="body">判断下一步分析方向</text>
+  <text x="356" y="370" class="body">解析工具调用与响应</text>
+
+  <rect x="336" y="456" width="216" height="96" rx="10" class="card" stroke="#10a37f"/>
+  <text x="356" y="486" class="heading green">工具执行</text>
+  <text x="356" y="510" class="body">只读工具批次可并行</text>
+  <text x="356" y="532" class="body">发请求与状态操作串行</text>
+
+  <rect x="64" y="456" width="216" height="96" rx="10" class="card" stroke="#10a37f"/>
+  <text x="84" y="486" class="heading green">观察 / 回填</text>
+  <text x="84" y="510" class="body">追加工具结果与证据</text>
+  <text x="84" y="532" class="body">识别异常与 WAF 信号</text>
+
+  <path d="M280 342 H336" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <text x="308" y="326" text-anchor="middle" class="label purple">推理</text>
+  <path d="M444 390 V456" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <text x="460" y="413" class="label purple">tool_calls</text>
+  <text x="460" y="435" class="label purple">执行调用</text>
+  <path d="M336 504 H280" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="308" y="488" text-anchor="middle" class="label green">结果</text>
+  <path d="M172 456 V390" class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)"/>
+  <text x="188" y="413" class="label blue">继续</text>
+  <text x="188" y="435" class="label blue">下一轮</text>
+
+  <!-- Dashed leaders are annotations, not executable stages. -->
+  <rect x="616" y="210" width="232" height="240" rx="12" fill="#fff7ed" stroke="#fdba74" stroke-dasharray="5 5"/>
+  <path d="M584 260 H616" class="edge" stroke="#d97706" stroke-dasharray="4 4"/>
+  <text x="636" y="240" class="heading orange">循环护栏 · 全程生效</text>
+  <text x="636" y="270" class="body">最多 50 轮安全断路器</text>
+  <text x="636" y="294" class="body">每轮输出 ≤ 16384 tokens</text>
+  <text x="636" y="330" class="body">上下文按预算分级压缩</text>
+  <text x="636" y="354" class="body">连续无异常 / WAF</text>
+  <text x="636" y="376" class="body">触发反思与策略调整</text>
+  <text x="636" y="422" class="label orange">全程约束，不串入执行顺序</text>
+
+  <rect x="616" y="476" width="232" height="104" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="5 5"/>
+  <path d="M584 528 H616" class="edge" stroke="#94a3b8" stroke-dasharray="4 4"/>
+  <text x="636" y="506" class="heading">提交也是工具调用</text>
+  <text x="636" y="532" class="body">门禁拒绝 → 返回原因</text>
+  <text x="636" y="554" class="body">补齐证据后继续循环</text>
+
+  <path d="M308 580 V624" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="324" y="608" class="label green">满足任一终止条件</text>
+  <rect x="32" y="624" width="816" height="152" rx="12" fill="#f0fdf4" stroke="#86d5b4" stroke-dasharray="5 5"/>
+  <text x="52" y="652" class="heading green">终止与证据保留</text>
+
+  <rect x="52" y="668" width="236" height="84" rx="10" class="card" stroke="#10a37f"/>
+  <text x="72" y="697" class="heading green">提交通过</text>
+  <text x="72" y="723" class="body">submit_report → 正常成文</text>
+  <rect x="318" y="668" width="220" height="84" rx="10" class="card" stroke="#94a3b8"/>
+  <text x="338" y="697" class="heading">用户取消</text>
+  <text x="338" y="723" class="body">cancel → 已有证据兜底</text>
+  <rect x="568" y="668" width="260" height="84" rx="10" class="card" stroke="#d97706"/>
+  <text x="588" y="697" class="heading orange">上限或异常</text>
+  <text x="588" y="723" class="body">fallback → 保留已收集证据</text>
+</svg>

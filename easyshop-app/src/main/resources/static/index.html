@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EasyShop</title>
+  <!-- Vue 3 + Vue Router 4 via CDN -->
+  <script src="/vue.global.prod.js"></script>
+  <script src="/vue-router.global.prod.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+    .app { max-width: 960px; margin: 0 auto; padding: 20px; }
+    nav { background: #1a1a2e; padding: 12px 20px; display: flex; align-items: center; gap: 16px; border-radius: 8px; margin-bottom: 20px; }
+    nav a { color: #a0a0c0; text-decoration: none; font-size: 14px; }
+    nav a.router-link-active { color: #fff; font-weight: 600; }
+    nav .brand { color: #fff; font-weight: 700; font-size: 18px; margin-right: auto; }
+    nav .user-info { color: #888; font-size: 12px; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .card h2 { margin-bottom: 12px; font-size: 18px; }
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; color: #555; }
+    .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    .btn { padding: 8px 20px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600; }
+    .btn-primary { background: #4361ee; color: #fff; }
+    .btn-primary:hover { background: #3a56d4; }
+    .btn-danger { background: #e63946; color: #fff; }
+    .btn-sm { padding: 4px 12px; font-size: 12px; }
+    .alert { padding: 10px 16px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
+    .alert-success { background: #d4edda; color: #155724; }
+    .alert-error { background: #f8d7da; color: #721c24; }
+    .alert-info { background: #cce5ff; color: #004085; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee; }
+    th { font-size: 12px; color: #888; text-transform: uppercase; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-pending { background: #fff3cd; color: #856404; }
+    .badge-shipped { background: #d4edda; color: #155724; }
+    .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .stat-card { background: #f8f9fa; border-radius: 8px; padding: 16px; text-align: center; }
+    .stat-card .value { font-size: 28px; font-weight: 700; color: #4361ee; }
+    .stat-card .label { font-size: 12px; color: #888; margin-top: 4px; }
+    .steps { display: flex; gap: 0; margin-bottom: 20px; }
+    .step { flex: 1; padding: 8px; text-align: center; background: #e9ecef; font-size: 13px; font-weight: 600; color: #888; }
+    .step.active { background: #4361ee; color: #fff; }
+    .step.done { background: #d4edda; color: #155724; }
+    .hidden-panel { border: 2px dashed #ddd; padding: 20px; text-align: center; color: #888; margin-top: 20px; }
+    .admin-link { font-size: 11px; color: #ccc; cursor: pointer; }
+    .admin-link:hover { color: #4361ee; }
+    /* Dropdown menu for tools */
+    .nav-dropdown { position: relative; }
+    .nav-dropdown > .dropdown-trigger { color: #a0a0c0; font-size: 14px; cursor: pointer; text-decoration: none; }
+    .nav-dropdown > .dropdown-trigger:hover, .nav-dropdown.open > .dropdown-trigger { color: #fff; }
+    .nav-dropdown .dropdown-menu { display: none; position: absolute; top: 100%; left: 0; background: #1a1a2e; border-radius: 0 0 8px 8px; min-width: 160px; padding: 8px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 100; }
+    .nav-dropdown.open .dropdown-menu { display: block; }
+    .nav-dropdown .dropdown-menu a { display: block; padding: 8px 16px; font-size: 13px; color: #a0a0c0; }
+    .nav-dropdown .dropdown-menu a:hover { color: #fff; background: rgba(255,255,255,0.05); }
+    .nav-dropdown .dropdown-menu a.router-link-active { color: #4361ee; font-weight: 600; }
+    /* Tab panel */
+    .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid #e9ecef; }
+    .tab-btn { padding: 8px 16px; border: none; background: none; cursor: pointer; font-size: 13px; font-weight: 600; color: #888; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+    .tab-btn.active { color: #4361ee; border-bottom-color: #4361ee; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    /* Inline form */
+    .inline-form { display: flex; gap: 8px; align-items: flex-end; }
+    .inline-form .form-group { flex: 1; margin-bottom: 0; }
+    .result-box { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 12px; margin-top: 12px; font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div class="app">
+    <!-- Navigation -->
+    <nav v-if="token">
+      <span class="brand">🛒 EasyShop</span>
+      <router-link to="/dashboard">仪表板</router-link>
+      <router-link to="/orders">订单</router-link>
+      <div class="nav-dropdown" :class="{ open: showTools }">
+        <span class="dropdown-trigger" @click="showTools = !showTools">🔧 工具 ▾</span>
+        <div class="dropdown-menu">
+          <router-link to="/users" @click="showTools = false">👥 用户管理</router-link>
+          <router-link to="/products" @click="showTools = false">📦 商品目录</router-link>
+          <router-link to="/files" @click="showTools = false">📁 文件管理</router-link>
+          <router-link to="/transfer" @click="showTools = false">💰 转账中心</router-link>
+          <router-link to="/render" @click="showTools = false">🎨 页面渲染</router-link>
+          <router-link to="/import" @click="showTools = false">📥 数据导入</router-link>
+          <router-link to="/security-tools" @click="showTools = false">🔒 安全工具</router-link>
+        </div>
+      </div>
+      <router-link to="/profile">个人设置</router-link>
+      <span class="user-info">{{ username }} | <a href="#" @click.prevent="logout" style="color:#e63946">退出</a></span>
+    </nav>
+
+    <router-view></router-view>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, watch } = Vue;
+const { createRouter, createWebHashHistory, useRouter, useRoute } = VueRouter;
+
+// ── Auth Store (simple reactive) ──
+const auth = reactive({
+  loggedIn: localStorage.getItem('easyshop_logged') === 'true',
+  username: localStorage.getItem('easyshop_user') || '',
+});
+
+function apiHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  return h;
+}
+
+async function apiFetch(method, path, body) {
+  const opts = {
+    method,
+    headers: apiHeaders(),
+    credentials: 'same-origin'  // send SESSION_USER cookie automatically
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const resp = await fetch(path, opts);
+  const data = await resp.json().catch(() => ({}));
+  return { status: resp.status, data };
+}
+
+// ── Pages ──
+
+// Login Page
+const LoginPage = {
+  template: `
+    <div>
+      <div class="card" style="max-width:400px;margin:60px auto">
+        <h2>🔐 登录 EasyShop</h2>
+        <div v-if="error" class="alert alert-error">{{ error }}</div>
+        <div class="form-group">
+          <label>用户名 / 邮箱</label>
+          <input v-model="username" placeholder="请输入用户名" @keyup.enter="login">
+        </div>
+        <div class="form-group">
+          <label>密码</label>
+          <input v-model="password" type="password" placeholder="请输入密码" @keyup.enter="login">
+        </div>
+        <button class="btn btn-primary" style="width:100%" @click="login" :disabled="loading">
+          {{ loading ? '登录中...' : '登录' }}
+        </button>
+        <div style="margin-top:16px;display:flex;justify-content:space-between;font-size:12px">
+          <a href="#" style="color:#4361ee;text-decoration:none">忘记密码?</a>
+          <a href="#" style="color:#4361ee;text-decoration:none">注册新账号</a>
+        </div>
+      </div>
+    </div>
+  `,
+  setup() {
+    const router = useRouter();
+    const username = ref('alice');
+    const password = ref('');
+    const error = ref('');
+    const loading = ref(false);
+
+    async function login() {
+      loading.value = true;
+      error.value = '';
+      try {
+        // Call the actual login endpoint: POST /api/login?username=xxx
+        // This sets a SESSION_USER cookie (no password needed — demo app)
+        const { status, data } = await apiFetch('POST',
+            '/api/login?username=' + encodeURIComponent(username.value));
+        if (status === 200 && data.userId) {
+          auth.loggedIn = true;
+          auth.username = username.value;
+          localStorage.setItem('easyshop_logged', 'true');
+          localStorage.setItem('easyshop_user', username.value);
+          router.push('/dashboard');
+        } else {
+          error.value = data.error || '登录失败（用户不存在）';
+        }
+      } catch (e) {
+        error.value = '网络错误: ' + e.message;
+      }
+      loading.value = false;
+    }
+
+    return { username, password, error, loading, login };
+  }
+};
+
+// Dashboard Page
+const DashboardPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>📊 仪表板</h2>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="value">{{ stats.totalOrders || 0 }}</div>
+            <div class="label">总订单数</div>
+          </div>
+          <div class="stat-card">
+            <div class="value">{{ stats.pendingOrders || 0 }}</div>
+            <div class="label">待处理</div>
+          </div>
+          <div class="stat-card">
+            <div class="value">¥{{ (stats.totalRevenue || 0).toFixed(2) }}</div>
+            <div class="label">总收入</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>⚡ 快速操作</h2>
+        <router-link to="/orders/new" class="btn btn-primary">创建新订单</router-link>
+        <router-link to="/orders" class="btn" style="background:#e9ecef;margin-left:8px">查看所有订单</router-link>
+      </div>
+      <!-- Hidden admin panel — only discoverable by inspecting DOM or clicking tiny link -->
+      <div class="hidden-panel" v-if="showAdmin">
+        <p style="margin-bottom:12px">🔒 管理员面板</p>
+        <button class="btn btn-danger btn-sm" @click="exportData">导出所有用户数据</button>
+        <button class="btn btn-sm" style="background:#ffc107;margin-left:8px" @click="debugInfo">系统调试信息</button>
+        <button class="btn btn-sm" style="background:#e9ecef;margin-left:8px" @click="resetAll">重置数据</button>
+        <div v-if="exportResult" class="alert alert-info" style="margin-top:12px">
+          导出结果: {{ exportResult }}
+        </div>
+      </div>
+      <p class="admin-link" @click="showAdmin = !showAdmin" style="text-align:right;margin-top:8px">
+        {{ showAdmin ? '隐藏' : '·' }}
+      </p>
+    </div>
+  `,
+  setup() {
+    const stats = ref({});
+    const showAdmin = ref(false);
+    const exportResult = ref('');
+
+    onMounted(async () => {
+      // Dashboard stats — may not exist in backend, gracefully handle
+      const { data } = await apiFetch('GET', '/api/orders/1');
+      if (data.id) {
+        stats.value = { totalOrders: 5, pendingOrders: 2, totalRevenue: 1299.50 };
+      }
+    });
+
+    async function exportData() {
+      const { status, data } = await apiFetch('GET', '/api/admin/export');
+      exportResult.value = status === 200 ? '成功导出 ' + (data.length || 0) + ' 条记录' : '导出失败: ' + status;
+    }
+
+    async function debugInfo() {
+      const { status, data } = await apiFetch('GET', '/api/debug/config');
+      exportResult.value = '调试信息已获取 (status=' + status + ')';
+    }
+
+    async function resetAll() {
+      const { status, data } = await apiFetch('POST', '/api/admin/reset');
+      exportResult.value = data.success ? '数据已重置: ' + JSON.stringify(data.tables) : '重置失败: ' + (data.error || status);
+    }
+
+    return { stats, showAdmin, exportResult, exportData, debugInfo, resetAll };
+  }
+};
+
+// Orders List Page
+const OrdersPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>📦 订单列表</h2>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>商品</th><th>金额</th><th>状态</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="order in orders" :key="order.id">
+              <td>#{{ order.id }}</td>
+              <td>{{ order.item }}</td>
+              <td>¥{{ order.total }}</td>
+              <td><span class="badge" :class="'badge-' + order.status">{{ order.status }}</span></td>
+              <td>
+                <router-link :to="'/orders/' + order.id" class="btn btn-sm btn-primary">查看</router-link>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-if="orders.length === 0" style="text-align:center;color:#888;padding:20px">
+          暂无订单。<router-link to="/orders/new">创建一个</router-link>
+        </p>
+      </div>
+    </div>
+  `,
+  setup() {
+    const orders = ref([]);
+
+    onMounted(async () => {
+      // Fetch orders 1-5 (demo data)
+      // Fetch orders 1001-1010 (actual IDs in OrderService)
+      for (let i = 1001; i <= 1010; i++) {
+        const { status, data } = await apiFetch('GET', '/api/orders/' + i);
+        if (status === 200 && data.id) {
+          orders.value.push({ ...data, status: i <= 2 ? 'shipped' : 'pending' });
+        }
+      }
+    });
+
+    return { orders };
+  }
+};
+
+// Order Detail Page — DEEP INTERACTION: modify quantity triggers PUT
+const OrderDetailPage = {
+  template: `
+    <div>
+      <div class="card" v-if="order">
+        <h2>📋 订单详情 #{{ order.id }}</h2>
+        <table>
+          <tr><td><strong>商品</strong></td><td>{{ order.item }}</td></tr>
+          <tr><td><strong>所有者</strong></td><td>User #{{ order.ownerUserId }}</td></tr>
+          <tr><td><strong>金额</strong></td><td>¥{{ order.total }}</td></tr>
+        </table>
+        <div style="margin-top:16px">
+          <h3 style="font-size:14px;margin-bottom:8px">修改数量</h3>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input v-model.number="newQuantity" type="number" min="1" max="999"
+                   style="width:80px;padding:6px;border:1px solid #ddd;border-radius:4px"
+                   placeholder="数量">
+            <button class="btn btn-primary btn-sm" @click="updateQuantity" :disabled="saving">
+              {{ saving ? '保存中...' : '保存修改' }}
+            </button>
+          </div>
+          <div v-if="updateResult" class="alert" :class="updateResult.ok ? 'alert-success' : 'alert-error'" style="margin-top:8px">
+            {{ updateResult.message }}
+          </div>
+        </div>
+      </div>
+      <div class="card" v-else>
+        <p>加载中...</p>
+      </div>
+      <div class="card">
+        <router-link to="/orders" class="btn" style="background:#e9ecef">← 返回列表</router-link>
+      </div>
+    </div>
+  `,
+  setup() {
+    const route = useRoute();
+    const order = ref(null);
+    const newQuantity = ref(1);
+    const saving = ref(false);
+    const updateResult = ref(null);
+
+    onMounted(async () => {
+      const id = route.params.id;
+      const { status, data } = await apiFetch('GET', '/api/orders/' + id);
+      if (status === 200 && data.id) {
+        order.value = data;
+        newQuantity.value = 1;
+      }
+    });
+
+    async function updateQuantity() {
+      saving.value = true;
+      updateResult.value = null;
+      const id = route.params.id;
+      // This is the DEEP TRIGGER: only reachable through UI interaction
+      const { status, data } = await apiFetch('PUT', '/api/orders/' + id + '/quantity', {
+        quantity: newQuantity.value
+      });
+      if (status === 200) {
+        updateResult.value = { ok: true, message: '数量已更新为 ' + newQuantity.value };
+      } else {
+        updateResult.value = { ok: false, message: '更新失败: ' + (data.message || status) };
+      }
+      saving.value = false;
+    }
+
+    return { order, newQuantity, saving, updateResult, updateQuantity };
+  }
+};
+
+// New Order Page — MULTI-STEP FORM
+const NewOrderPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>🛒 创建新订单</h2>
+        <div class="steps">
+          <div class="step" :class="{ active: step === 1, done: step > 1 }">1. 商品信息</div>
+          <div class="step" :class="{ active: step === 2, done: step > 2 }">2. 配送信息</div>
+          <div class="step" :class="{ active: step === 3 }">3. 确认提交</div>
+        </div>
+
+        <!-- Step 1: Product -->
+        <div v-if="step === 1">
+          <div class="form-group">
+            <label>商品名称</label>
+            <input v-model="form.item" placeholder="例: 无线耳机">
+          </div>
+          <div class="form-group">
+            <label>数量</label>
+            <input v-model.number="form.quantity" type="number" min="1" max="999">
+          </div>
+          <div class="form-group">
+            <label>单价 (元)</label>
+            <input v-model.number="form.price" type="number" min="0" step="0.01">
+          </div>
+          <button class="btn btn-primary" @click="step = 2">下一步 →</button>
+        </div>
+
+        <!-- Step 2: Shipping -->
+        <div v-if="step === 2">
+          <div class="form-group">
+            <label>收货地址</label>
+            <textarea v-model="form.address" rows="2" placeholder="省/市/区/详细地址"></textarea>
+          </div>
+          <div class="form-group">
+            <label>配送方式</label>
+            <select v-model="form.shipping">
+              <option value="standard">标准配送 (3-5天)</option>
+              <option value="express">快速配送 (1-2天)</option>
+              <option value="overnight">次日达</option>
+            </select>
+          </div>
+          <button class="btn" style="background:#e9ecef" @click="step = 1">← 上一步</button>
+          <button class="btn btn-primary" style="margin-left:8px" @click="step = 3">下一步 →</button>
+        </div>
+
+        <!-- Step 3: Confirm -->
+        <div v-if="step === 3">
+          <div class="alert alert-info">
+            <strong>订单摘要</strong><br>
+            商品: {{ form.item }} × {{ form.quantity }}<br>
+            单价: ¥{{ form.price }} · 总计: ¥{{ (form.quantity * form.price).toFixed(2) }}<br>
+            配送: {{ form.shipping }} · 地址: {{ form.address }}
+          </div>
+          <button class="btn" style="background:#e9ecef" @click="step = 2">← 修改</button>
+          <button class="btn btn-primary" style="margin-left:8px" @click="submitOrder" :disabled="submitting">
+            {{ submitting ? '提交中...' : '确认提交订单' }}
+          </button>
+          <div v-if="submitResult" class="alert" :class="submitResult.ok ? 'alert-success' : 'alert-error'" style="margin-top:12px">
+            {{ submitResult.message }}
+          </div>
+        </div>
+      </div>
+    </div>
+  `,
+  setup() {
+    const router = useRouter();
+    const step = ref(1);
+    const submitting = ref(false);
+    const submitResult = ref(null);
+    const form = reactive({
+      item: '', quantity: 1, price: 99.00,
+      address: '', shipping: 'standard'
+    });
+
+    async function submitOrder() {
+      submitting.value = true;
+      submitResult.value = null;
+      // Multi-step form → final API call (deep interaction)
+      const { status, data } = await apiFetch('POST', '/api/orders', {
+        item: form.item,
+        quantity: form.quantity,
+        price: form.price,
+        address: form.address,
+        shipping: form.shipping,
+        total: (form.quantity * form.price).toFixed(2)
+      });
+      if (status === 200 || status === 201) {
+        submitResult.value = { ok: true, message: '订单创建成功! ID: ' + (data.id || '未知') };
+        setTimeout(() => router.push('/orders'), 2000);
+      } else {
+        submitResult.value = { ok: false, message: '创建失败: ' + (data.message || data.error || status) };
+      }
+      submitting.value = false;
+    }
+
+    return { step, form, submitting, submitResult, submitOrder };
+  }
+};
+
+// Profile Page
+const ProfilePage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>👤 个人设置</h2>
+        <div class="form-group">
+          <label>用户名</label>
+          <input v-model="profile.username" disabled style="background:#f5f5f5">
+        </div>
+        <div class="form-group">
+          <label>邮箱</label>
+          <input v-model="profile.email" placeholder="user@example.com">
+        </div>
+        <div class="form-group">
+          <label>手机号</label>
+          <input v-model="profile.phone" placeholder="13800138000">
+        </div>
+        <button class="btn btn-primary" @click="saveProfile" :disabled="saving">
+          {{ saving ? '保存中...' : '保存修改' }}
+        </button>
+        <div v-if="result" class="alert" :class="result.ok ? 'alert-success' : 'alert-error'" style="margin-top:8px">
+          {{ result.message }}
+        </div>
+      </div>
+    </div>
+  `,
+  setup() {
+    const saving = ref(false);
+    const result = ref(null);
+    const profile = reactive({
+      username: auth.username,
+      email: auth.username + '@easyshop.local',
+      phone: ''
+    });
+
+    async function saveProfile() {
+      saving.value = true;
+      const { status, data } = await apiFetch('POST', '/api/profile/update', {
+        username: profile.username,
+        email: profile.email,
+        phone: profile.phone,
+        // extra fields accepted by backend
+        role: 'user'
+      });
+      result.value = status === 200
+        ? { ok: true, message: '个人资料已更新' }
+        : { ok: false, message: '更新失败: ' + (data.message || status) };
+      saving.value = false;
+    }
+
+    return { profile, saving, result, saveProfile };
+  }
+};
+
+// ── Helper: raw fetch (for non-JSON responses like HTML, redirects) ──
+async function rawFetch(method, path, body, headers) {
+  const opts = { method, credentials: 'same-origin', headers: headers || {} };
+  if (body) opts.body = body;
+  const resp = await fetch(path, opts);
+  const text = await resp.text();
+  return { status: resp.status, text, headers: Object.fromEntries(resp.headers.entries()) };
+}
+
+// ── New Pages ──
+
+// Users Page — covers #1, #2, #5, #6, #17, #18
+const UsersPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>👥 用户管理</h2>
+        <div class="inline-form" style="margin-bottom:16px">
+          <div class="form-group"><label>搜索关键词</label>
+            <input v-model="searchName" placeholder="输入用户名或商品名">
+          </div>
+          <button class="btn btn-primary" @click="searchUsers">搜索用户</button>
+          <button class="btn" style="background:#e9ecef" @click="searchProducts">搜索商品</button>
+        </div>
+        <div v-if="searchResult" class="result-box">{{ searchResult }}</div>
+      </div>
+      <div class="card">
+        <h2>👤 用户列表</h2>
+        <button class="btn btn-danger btn-sm" @click="listAllUsers" style="margin-bottom:12px">查看所有用户（管理员）</button>
+        <div v-if="userList.length">
+          <table><thead><tr><th>ID</th><th>用户名</th><th>邮箱</th><th>操作</th></tr></thead>
+            <tbody><tr v-for="u in userList" :key="u.id">
+              <td>{{ u.id }}</td><td>{{ u.username }}</td><td>{{ u.email }}</td>
+              <td>
+                <a href="#" @click.prevent="viewUser(u.id)" style="color:#4361ee;margin-right:8px">详情</a>
+                <a href="#" @click.prevent="viewUserPublic(u.id)" style="color:#888">公开</a>
+              </td>
+            </tr></tbody>
+          </table>
+        </div>
+        <div v-if="userDetail" class="result-box">{{ userDetail }}</div>
+      </div>
+      <div class="card">
+        <h2>🧾 发票查询</h2>
+        <div class="inline-form">
+          <div class="form-group"><label>发票 ID</label><input v-model="invoiceId" placeholder="2001"></div>
+          <button class="btn btn-primary" @click="viewInvoice">查询</button>
+        </div>
+        <div v-if="invoiceResult" class="result-box">{{ invoiceResult }}</div>
+      </div>
+      <div class="card" style="border:1px dashed #ddd">
+        <h3 style="font-size:13px;color:#888;margin-bottom:8px">旧版 API（v0）</h3>
+        <p style="font-size:12px;color:#aaa;margin-bottom:8px">以下接口来自已废弃的 v0 版本，可能缺少安全保护</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a href="#" @click.prevent="fetchV0('/api/v0/users')" style="color:#4361ee;font-size:12px">/api/v0/users</a>
+          <a href="#" @click.prevent="fetchV0('/api/v0/users/1')" style="color:#4361ee;font-size:12px">/api/v0/users/1</a>
+          <a href="#" @click.prevent="fetchV0('/api/v0/debug')" style="color:#4361ee;font-size:12px">/api/v0/debug</a>
+        </div>
+        <div v-if="v0Result" class="result-box">{{ v0Result }}</div>
+      </div>
+    </div>`,
+  setup() {
+    const searchName = ref('');
+    const searchResult = ref('');
+    const userList = ref([]);
+    const userDetail = ref('');
+    const invoiceId = ref('2001');
+    const invoiceResult = ref('');
+    async function searchUsers() {
+      const { status, data } = await apiFetch('GET', '/api/users/search?name=' + encodeURIComponent(searchName.value));
+      searchResult.value = JSON.stringify(data, null, 2);
+    }
+    async function searchProducts() {
+      const { status, data } = await apiFetch('GET', '/api/products/search?name=' + encodeURIComponent(searchName.value));
+      searchResult.value = JSON.stringify(data, null, 2);
+    }
+    async function listAllUsers() {
+      const { status, data } = await apiFetch('GET', '/api/admin/users');
+      if (Array.isArray(data)) userList.value = data;
+      else userDetail.value = JSON.stringify(data, null, 2);
+    }
+    async function viewUser(id) {
+      const { status, data } = await apiFetch('GET', '/api/users/' + id);
+      userDetail.value = '[GET /api/users/' + id + ']\n' + JSON.stringify(data, null, 2);
+    }
+    async function viewUserPublic(id) {
+      const { status, data } = await apiFetch('GET', '/api/users/' + id + '/public');
+      userDetail.value = '[GET /api/users/' + id + '/public]\n' + JSON.stringify(data, null, 2);
+    }
+    async function viewInvoice() {
+      const { status, data } = await apiFetch('GET', '/api/invoices/' + invoiceId.value);
+      invoiceResult.value = JSON.stringify(data, null, 2);
+    }
+    const v0Result = ref('');
+    async function fetchV0(path) {
+      const { status, data } = await apiFetch('GET', path);
+      v0Result.value = '[' + path + ' status=' + status + ']\n' + JSON.stringify(data, null, 2);
+    }
+    return { searchName, searchResult, userList, userDetail, invoiceId, invoiceResult, searchUsers, searchProducts, listAllUsers, viewUser, viewUserPublic, viewInvoice, v0Result, fetchV0 };
+  }
+};
+
+// Products Page
+const ProductsPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>📦 商品目录</h2>
+        <p style="font-size:13px;color:#888;margin-bottom:12px">查询商品详情，支持普通查询和安全查询</p>
+        <div class="inline-form">
+          <div class="form-group"><label>商品 ID</label><input v-model="productId" placeholder="1"></div>
+          <button class="btn btn-primary" @click="detail(false)">查询详情</button>
+          <button class="btn" style="background:#e9ecef" @click="detail(true)">安全查询</button>
+        </div>
+        <div v-if="result" class="result-box">{{ result }}</div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:14px;margin-bottom:8px">快速选择</h3>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm" style="background:#e9ecef" @click="productId='1';detail(false)">Widget (ID:1)</button>
+          <button class="btn btn-sm" style="background:#e9ecef" @click="productId='2';detail(false)">Gadget (ID:2)</button>
+          <button class="btn btn-sm" style="background:#e9ecef" @click="productId='3';detail(false)">Gizmo (ID:3)</button>
+        </div>
+      </div>
+    </div>`,
+  setup() {
+    const productId = ref('1');
+    const result = ref('');
+    async function detail(safe) {
+      const path = safe ? '/api/product-info?id=' : '/api/products/detail?id=';
+      const { status, data } = await apiFetch('GET', path + encodeURIComponent(productId.value));
+      result.value = '[' + (safe ? '✓ 安全模式' : '普通模式') + '] ' + JSON.stringify(data, null, 2);
+    }
+    return { productId, result, detail };
+  }
+};
+
+// Files Page
+const FilesPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>📁 文件管理</h2>
+        <p style="font-size:13px;color:#888;margin-bottom:12px">浏览和读取服务器文件</p>
+        <div class="inline-form">
+          <div class="form-group"><label>文件路径</label><input v-model="filePath" placeholder="readme.txt"></div>
+          <button class="btn btn-primary" @click="readFile(false)">读取</button>
+          <button class="btn" style="background:#e9ecef" @click="readFile(true)">安全读取</button>
+        </div>
+        <div v-if="result" class="result-box">{{ result }}</div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:14px;margin-bottom:8px">预设路径</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" style="background:#e9ecef" @click="filePath='readme.txt';readFile(false)">readme.txt</button>
+          <button class="btn btn-sm" style="background:#ffc107" @click="filePath='../../../etc/passwd';readFile(false)">../../../etc/passwd</button>
+          <button class="btn btn-sm" style="background:#ffc107" @click="filePath='../../../etc/hosts';readFile(false)">../../../etc/hosts</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>📋 查看日志</h2>
+        <p style="font-size:13px;color:#888;margin-bottom:12px">查看服务器日志文件</p>
+        <div class="inline-form">
+          <div class="form-group"><label>日志文件</label><input v-model="logFile" placeholder="app.log"></div>
+          <button class="btn btn-primary" @click="readLog(false)">查看</button>
+          <button class="btn" style="background:#e9ecef" @click="readLog(true)">安全查看</button>
+        </div>
+        <div v-if="logResult" class="result-box">{{ logResult }}</div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn btn-sm" style="background:#e9ecef" @click="logFile='app.log';readLog(false)">app.log</button>
+          <button class="btn btn-sm" style="background:#e9ecef" @click="logFile='access.log';readLog(false)">access.log</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>📥 文件下载</h2>
+        <p style="font-size:13px;color:#888;margin-bottom:12px">下载文件（自定义文件名）</p>
+        <div class="inline-form">
+          <div class="form-group"><label>文件名</label><input v-model="downloadFile" placeholder="report.pdf"></div>
+          <button class="btn btn-primary" @click="doDownload(false)">下载</button>
+          <button class="btn" style="background:#e9ecef" @click="doDownload(true)">安全下载</button>
+        </div>
+        <div v-if="downloadResult" class="result-box">{{ downloadResult }}</div>
+      </div>
+    </div>`,
+  setup() {
+    const filePath = ref('readme.txt');
+    const result = ref('');
+    const logFile = ref('app.log');
+    const logResult = ref('');
+    async function readFile(safe) {
+      const path = safe ? '/api/documents?path=' : '/api/files?path=';
+      const { status, data } = await apiFetch('GET', path + encodeURIComponent(filePath.value));
+      result.value = '[' + (safe ? '✓ 安全模式' : '普通模式') + ' status=' + status + ']\n' + JSON.stringify(data, null, 2);
+    }
+    async function readLog(safe) {
+      const path = safe ? '/api/system-logs?file=' : '/api/logs?file=';
+      const { status, data } = await apiFetch('GET', path + encodeURIComponent(logFile.value));
+      logResult.value = '[' + (safe ? '✓ 安全模式' : '普通模式') + ' status=' + status + ']\n' + JSON.stringify(data, null, 2);
+    }
+    const downloadFile = ref('report.pdf');
+    const downloadResult = ref('');
+    async function doDownload(safe) {
+      const path = safe ? '/api/fetch-file?filename=' : '/api/download?filename=';
+      const r = await rawFetch('GET', path + encodeURIComponent(downloadFile.value));
+      downloadResult.value = '[' + (safe ? '✓ 安全模式' : '普通模式') + ' status=' + r.status + ']\nHeaders: ' + JSON.stringify(r.headers) + '\nBody: ' + r.text;
+    }
+    return { filePath, result, logFile, logResult, readFile, readLog, downloadFile, downloadResult, doDownload };
+  }
+};
+
+// Transfer Page
+const TransferPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>💰 转账中心</h2>
+        <p style="font-size:13px;color:#888;margin-bottom:12px">当前用户: {{ currentUser }} · 余额: ¥{{ balance }}</p>
+        <div class="inline-form">
+          <div class="form-group"><label>目标用户 ID</label><input v-model.number="toUser" type="number"></div>
+          <div class="form-group"><label>转账金额</label><input v-model.number="amount" type="number"></div>
+          <button class="btn btn-primary" @click="transfer(false)">转账</button>
+          <button class="btn" style="background:#e9ecef" @click="transfer(true)">安全转账</button>
+        </div>
+        <div v-if="result" class="result-box">{{ result }}</div>
+      </div>
+      <div class="card">
+        <h2>🛒 快速结账</h2>
+        <p style="font-size:13px;color:#888;margin-bottom:12px">一键快速结账</p>
+        <button class="btn btn-danger" @click="checkout">一键结账</button>
+        <div v-if="checkoutResult" class="result-box">{{ checkoutResult }}</div>
+      </div>
+      <div class="card">
+        <h2>🎫 优惠券</h2>
+        <p style="font-size:13px;color:#888;margin-bottom:12px">输入优惠码和订单金额</p>
+        <div class="inline-form">
+          <div class="form-group"><label>优惠码</label><input v-model="couponCode" placeholder="SAVE10"></div>
+          <div class="form-group"><label>订单金额</label><input v-model.number="couponTotal" type="number"></div>
+          <button class="btn btn-primary" @click="applyCoupon(false)">使用</button>
+          <button class="btn" style="background:#e9ecef" @click="applyCoupon(true)">安全使用</button>
+        </div>
+        <div v-if="couponResult" class="result-box">{{ couponResult }}</div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn btn-sm" style="background:#e9ecef" @click="couponCode='SAVE10'">SAVE10</button>
+          <button class="btn btn-sm" style="background:#e9ecef" @click="couponCode='VIP20'">VIP20</button>
+          <button class="btn btn-sm" style="background:#e9ecef" @click="couponCode='NEW50'">NEW50</button>
+          <button class="btn btn-sm" style="background:#e9ecef" @click="couponCode='SUMMER30'">SUMMER30</button>
+          <button class="btn btn-sm" style="background:#e9ecef" @click="couponCode='TECH100'">TECH100</button>
+          <button class="btn btn-sm" style="background:#e9ecef" @click="couponCode='FIRST15'">FIRST15</button>
+        </div>
+      </div>
+    </div>`,
+  setup() {
+    const currentUser = ref(localStorage.getItem('easyshop_user') || 'alice');
+    const balance = ref('—');
+    const toUser = ref(2);
+    const amount = ref(100);
+    const result = ref('');
+    const checkoutResult = ref('');
+    onMounted(async () => {
+      // Show user IDs for convenience
+      const userIdMap = { alice: 1, bob: 2, admin: 3 };
+      const uid = userIdMap[currentUser.value] || 1;
+      const { status, data } = await apiFetch('GET', '/api/orders/' + uid);
+    });
+    async function transfer(safe) {
+      const path = safe ? '/api/wallet/transfer' : '/api/transfer';
+      const { status, data } = await apiFetch('POST', path + '?amount=' + amount.value + '&toUser=' + toUser.value);
+      result.value = '[' + (safe ? '✓ 安全模式' : '普通模式') + ']\n' + JSON.stringify(data, null, 2);
+      if (data.remaining !== undefined) balance.value = data.remaining;
+    }
+    async function checkout() {
+      const { status, data } = await apiFetch('POST', '/api/checkout');
+      checkoutResult.value = JSON.stringify(data, null, 2);
+    }
+    const couponCode = ref('SAVE10');
+    const couponTotal = ref(100);
+    const couponResult = ref('');
+    async function applyCoupon(safe) {
+      const path = safe ? '/api/coupon/redeem' : '/api/coupon/apply';
+      const { status, data } = await apiFetch('POST', path, { code: couponCode.value, orderTotal: String(couponTotal.value) });
+      couponResult.value = '[' + (safe ? '✓ 安全模式' : '普通模式') + ' status=' + status + ']\n' + JSON.stringify(data, null, 2);
+    }
+    return { currentUser, balance, toUser, amount, result, checkoutResult, transfer, checkout, couponCode, couponTotal, couponResult, applyCoupon };
+  }
+};
+
+// Render Page
+const RenderPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>🎨 页面渲染测试</h2>
+        <h3 style="font-size:14px;margin-bottom:8px">问候测试</h3>
+        <div class="inline-form">
+          <div class="form-group"><label>问候名字</label><input v-model="greetName" placeholder="World"></div>
+          <button class="btn btn-primary" @click="greet(false)">打招呼</button>
+          <button class="btn" style="background:#e9ecef" @click="greet(true)">安全问候</button>
+        </div>
+        <div v-if="greetResult" class="result-box" v-html="greetResult"></div>
+        <div style="margin-top:8px">
+          <button class="btn btn-sm" style="background:#ffc107" @click="fillSpecialChars">填入特殊字符</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:14px;margin-bottom:8px">模板预览</h3>
+        <div class="inline-form">
+          <div class="form-group"><label>模板内容</label><input v-model="templateStr" placeholder="Hello"></div>
+          <button class="btn btn-primary" @click="render(false)">渲染</button>
+          <button class="btn" style="background:#e9ecef" @click="render(true)">安全渲染</button>
+        </div>
+        <div v-if="renderResult" class="result-box">{{ renderResult }}</div>
+        <div style="margin-top:8px">
+          <button class="btn btn-sm" style="background:#ffc107" @click="fillTemplateExpr">填入模板表达式</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:14px;margin-bottom:8px">账户信息</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm btn-primary" @click="checkProfile">查看资料</button>
+          <button class="btn btn-sm btn-primary" @click="checkProfile2">查看资料2</button>
+          <button class="btn btn-sm btn-primary" @click="checkDebug">系统配置</button>
+        </div>
+        <div v-if="profileResult" class="result-box">{{ profileResult }}</div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:14px;margin-bottom:8px">链接跳转</h3>
+        <div class="inline-form">
+          <div class="form-group"><label>目标 URL</label><input v-model="redirectUrl" placeholder="https://example.com"></div>
+          <button class="btn btn-primary" @click="doRedirect(false)">跳转</button>
+          <button class="btn" style="background:#e9ecef" @click="doRedirect(true)">安全跳转</button>
+        </div>
+        <div v-if="redirectResult" class="result-box">{{ redirectResult }}</div>
+        <div style="margin-top:8px">
+          <button class="btn btn-sm" style="background:#ffc107" @click="redirectUrl='https://evil.com/phishing'">填入恶意 URL</button>
+          <button class="btn btn-sm" style="background:#e9ecef" @click="redirectUrl='https://example.com'">填入安全 URL</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:14px;margin-bottom:8px">更新资料</h3>
+        <button class="btn btn-sm" style="background:#e9ecef" @click="safeUpdate">安全更新资料</button>
+        <div v-if="updateResult" class="result-box">{{ updateResult }}</div>
+      </div>
+    </div>`,
+  setup() {
+    const greetName = ref('World');
+    const greetResult = ref('');
+    const templateStr = ref('Hello');
+    const renderResult = ref('');
+    const profileResult = ref('');
+    const redirectUrl = ref('https://example.com');
+    const redirectResult = ref('');
+    const updateResult = ref('');
+    async function greet(safe) {
+      const path = safe ? '/api/welcome?name=' : '/api/greet?name=';
+      const r = await rawFetch('GET', path + encodeURIComponent(greetName.value));
+      greetResult.value = '<em>[' + (safe?'✓ 安全模式':'普通模式') + ' status=' + r.status + ']</em><br>' + r.text;
+    }
+    async function render(safe) {
+      const path = safe ? '/api/preview?template=' : '/api/render?template=';
+      const { status, data } = await apiFetch('GET', path + encodeURIComponent(templateStr.value));
+      renderResult.value = '[' + (safe?'✓ 安全模式':'普通模式') + ']\n' + JSON.stringify(data, null, 2);
+    }
+    function fillTemplateExpr() { templateStr.value = '${7*7}'; }
+    function fillSpecialChars() { greetName.value = '<scr' + 'ipt>alert(1)</scr' + 'ipt>'; }
+    async function checkProfile() {
+      const r = await rawFetch('GET', '/api/profile');
+      profileResult.value = '[/api/profile]\nHeaders: ' + JSON.stringify(r.headers) + '\nBody: ' + r.text;
+    }
+    async function checkProfile2() {
+      const r = await rawFetch('GET', '/api/profile2', null, { 'Origin': 'https://evil.example.com' });
+      profileResult.value = '[/api/profile2]\nHeaders: ' + JSON.stringify(r.headers) + '\nBody: ' + r.text;
+    }
+    async function checkDebug() {
+      const { status, data } = await apiFetch('GET', '/api/debug/config');
+      profileResult.value = '[/api/debug/config]\n' + JSON.stringify(data, null, 2);
+    }
+    async function doRedirect(safe) {
+      const path = safe ? '/api/goto?url=' : '/api/redirect?url=';
+      const r = await rawFetch('GET', path + encodeURIComponent(redirectUrl.value));
+      redirectResult.value = '[' + (safe?'✓ 安全模式':'普通模式') + ' status=' + r.status + ']\nHeaders: ' + JSON.stringify(r.headers) + '\nBody: ' + r.text;
+    }
+    async function safeUpdate() {
+      const { status, data } = await apiFetch('POST', '/api/profile/save', { name: 'test', email: 'test@example.com', role: 'admin', admin: true });
+      updateResult.value = JSON.stringify(data, null, 2);
+    }
+    return { greetName, greetResult, templateStr, renderResult, profileResult, redirectUrl, redirectResult, updateResult, greet, render, fillTemplateExpr, fillSpecialChars, checkProfile, checkProfile2, checkDebug, doRedirect, safeUpdate };
+  }
+};
+
+// Import Page — covers #15, #16
+const ImportPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>📥 数据导入</h2>
+        <p style="font-size:13px;color:#888;margin-bottom:12px">导入序列化数据（支持 .bin / .dat 文件）</p>
+        <div class="form-group">
+          <label>选择文件</label>
+          <input type="file" ref="fileInput" accept=".bin,.dat,.ser,application/octet-stream">
+        </div>
+        <button class="btn btn-primary" @click="doImport" :disabled="importing">导入</button>
+        <div v-if="result" class="result-box">{{ result }}</div>
+      </div>
+      <div class="card">
+        <h2>🖥️ 旧版仪表板</h2>
+        <p style="font-size:13px;color:#888;margin-bottom:12px">访问旧版静态仪表板页面（检查安全头）</p>
+        <a href="/web/dashboard" target="_blank" class="btn" style="background:#e9ecef">打开旧版仪表板 ↗</a>
+      </div>
+    </div>`,
+  setup() {
+    const fileInput = ref(null);
+    const importing = ref(false);
+    const result = ref('');
+    async function doImport() {
+      const file = fileInput.value?.files?.[0];
+      if (!file) { result.value = '请先选择文件'; return; }
+      importing.value = true;
+      try {
+        const buf = await file.arrayBuffer();
+        const r = await rawFetch('POST', '/api/import', buf, { 'Content-Type': 'application/octet-stream' });
+        result.value = '[status=' + r.status + ']\n' + r.text;
+      } catch (e) { result.value = 'Error: ' + e.message; }
+      importing.value = false;
+    }
+    return { fileInput, importing, result, doImport };
+  }
+};
+
+// Security Tools Page
+const SecurityToolsPage = {
+  template: `
+    <div>
+      <div class="card">
+        <h2>🔒 安全工具</h2>
+        <div class="tabs">
+          <button class="tab-btn" :class="{active:tab==='token'}" @click="tab='token'">Token 验证</button>
+          <button class="tab-btn" :class="{active:tab==='proxy'}" @click="tab='proxy'">URL 代理</button>
+          <button class="tab-btn" :class="{active:tab==='upload'}" @click="tab='upload'">上传</button>
+          <button class="tab-btn" :class="{active:tab==='xml'}" @click="tab='xml'">XML</button>
+          <button class="tab-btn" :class="{active:tab==='crypto'}" @click="tab='crypto'">加密/哈希</button>
+          <button class="tab-btn" :class="{active:tab==='query'}" @click="tab='query'">数据查询</button>
+        </div>
+        <!-- JWT Tab -->
+        <div class="tab-content" :class="{active:tab==='token'}">
+          <div class="form-group"><label>JWT Token</label><textarea v-model="jwtToken" rows="3" style="font-family:monospace;font-size:12px"></textarea></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button class="btn btn-primary btn-sm" @click="verifyJwt(false)">验证</button>
+            <button class="btn btn-sm" style="background:#e9ecef" @click="verifyJwt(true)">严格验证</button>
+          </div>
+          <button class="btn btn-sm" style="background:#ffc107" @click="jwtToken='eyJhbGciOiJub25lIn0.eyJ1c2VyIjoxfQ.'">填入 alg:none token</button>
+          <div v-if="jwtResult" class="result-box">{{ jwtResult }}</div>
+        </div>
+        <!-- SSRF Tab -->
+        <div class="tab-content" :class="{active:tab==='proxy'}">
+          <div class="form-group"><label>目标 URL</label><input v-model="ssrfUrl" placeholder="http://example.com"></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button class="btn btn-primary btn-sm" @click="doSsrf(false)">请求</button>
+            <button class="btn btn-sm" style="background:#e9ecef" @click="doSsrf(true)">安全请求</button>
+          </div>
+          <button class="btn btn-sm" style="background:#ffc107" @click="ssrfUrl='http://127.0.0.1:8089/api/debug/config'">填入内部地址</button>
+          <div v-if="ssrfResult" class="result-box">{{ ssrfResult }}</div>
+        </div>
+        <!-- Upload Tab -->
+        <div class="tab-content" :class="{active:tab==='upload'}">
+          <div class="form-group"><label>选择文件</label><input type="file" ref="uploadFile"></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button class="btn btn-primary btn-sm" @click="doUpload(false)">上传</button>
+            <button class="btn btn-sm" style="background:#e9ecef" @click="doUpload(true)">安全上传</button>
+          </div>
+          <div v-if="uploadResult" class="result-box">{{ uploadResult }}</div>
+        </div>
+        <!-- XML Tab -->
+        <div class="tab-content" :class="{active:tab==='xml'}">
+          <div class="form-group"><label>XML 内容</label><textarea v-model="xmlContent" rows="4" style="font-family:monospace;font-size:12px"></textarea></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button class="btn btn-primary btn-sm" @click="parseXml(false)">解析</button>
+            <button class="btn btn-sm" style="background:#e9ecef" @click="parseXml(true)">安全解析</button>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-sm" style="background:#e9ecef" @click="xmlContent='<root><data>Hello</data></root>'">正常 XML</button>
+            <button class="btn btn-sm" style="background:#ffc107" @click="fillSpecialXml">特殊 XML</button>
+          </div>
+          <div v-if="xmlResult" class="result-box">{{ xmlResult }}</div>
+        </div>
+        <!-- Crypto Tab -->
+        <div class="tab-content" :class="{active:tab==='crypto'}">
+          <h3 style="font-size:14px;margin-bottom:8px">加密</h3>
+          <div class="inline-form" style="margin-bottom:12px">
+            <div class="form-group"><label>明文</label><input v-model="cryptoData" placeholder="sensitive info"></div>
+            <button class="btn btn-primary btn-sm" @click="doEncrypt(false)">加密</button>
+            <button class="btn btn-sm" style="background:#e9ecef" @click="doEncrypt(true)">安全加密</button>
+          </div>
+          <h3 style="font-size:14px;margin-bottom:8px">用户注册</h3>
+          <div class="inline-form" style="margin-bottom:12px">
+            <div class="form-group"><label>用户名</label><input v-model="regUser" placeholder="test"></div>
+            <div class="form-group"><label>密码</label><input v-model="regPass" placeholder="hello123"></div>
+            <button class="btn btn-primary btn-sm" @click="doRegister(false)">注册</button>
+            <button class="btn btn-sm" style="background:#e9ecef" @click="doRegister(true)">安全注册</button>
+          </div>
+          <h3 style="font-size:14px;margin-bottom:8px">密码重置</h3>
+          <div class="inline-form" style="margin-bottom:12px">
+            <div class="form-group"><label>用户名</label><input v-model="resetUser" placeholder="alice"></div>
+            <button class="btn btn-primary btn-sm" @click="doResetToken(false)">重置</button>
+            <button class="btn btn-sm" style="background:#e9ecef" @click="doResetToken(true)">安全重置</button>
+          </div>
+          <div v-if="cryptoResult" class="result-box">{{ cryptoResult }}</div>
+        </div>
+        <!-- Query Tab (NoSQL) -->
+        <div class="tab-content" :class="{active:tab==='query'}">
+          <h3 style="font-size:14px;margin-bottom:8px">用户登录查询</h3>
+          <p style="font-size:12px;color:#888;margin-bottom:8px">输入 JSON 查询条件，匹配用户记录</p>
+          <div class="form-group"><label>查询 JSON</label><textarea v-model="nosqlQuery" rows="4" style="font-family:monospace;font-size:12px"></textarea></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button class="btn btn-primary btn-sm" @click="doNosqlLogin(false)">查询</button>
+            <button class="btn btn-sm" style="background:#e9ecef" @click="doNosqlLogin(true)">安全查询</button>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm" style="background:#e9ecef" @click="nosqlQuery='{&quot;username&quot;:&quot;alice&quot;,&quot;password&quot;:&quot;alice123&quot;}'">正常登录</button>
+            <button class="btn btn-sm" style="background:#ffc107" @click="fillNosqlBypass">特殊查询</button>
+          </div>
+          <div v-if="nosqlResult" class="result-box">{{ nosqlResult }}</div>
+        </div>
+      </div>
+    </div>`,
+  setup() {
+    const tab = ref('jwt');
+    // JWT
+    const jwtToken = ref('eyJhbGciOiJub25lIn0.eyJ1c2VyIjoxfQ.');
+    const jwtResult = ref('');
+    async function verifyJwt(strict) {
+      const path = strict ? '/api/auth/verify' : '/api/auth/token';
+      const { status, data } = await apiFetch('POST', path, { token: jwtToken.value });
+      jwtResult.value = '[' + (strict?'✓ 严格模式':'普通模式') + ']\n' + JSON.stringify(data, null, 2);
+    }
+    // SSRF
+    const ssrfUrl = ref('http://127.0.0.1:8089/api/debug/config');
+    const ssrfResult = ref('');
+    async function doSsrf(safe) {
+      const path = safe ? '/api/fetch-external' : '/api/fetch-url';
+      const { status, data } = await apiFetch('POST', path, { url: ssrfUrl.value });
+      ssrfResult.value = '[' + (safe?'✓ 安全模式':'普通模式') + ' status=' + status + ']\n' + JSON.stringify(data, null, 2);
+    }
+    // Upload
+    const uploadFile = ref(null);
+    const uploadResult = ref('');
+    async function doUpload(safe) {
+      const file = uploadFile.value?.files?.[0];
+      if (!file) { uploadResult.value = '请先选择文件'; return; }
+      const fd = new FormData();
+      fd.append('file', file);
+      const path = safe ? '/api/upload-image' : '/api/upload';
+      const resp = await fetch(path, { method: 'POST', body: fd, credentials: 'same-origin' });
+      const data = await resp.json().catch(() => ({}));
+      uploadResult.value = '[' + (safe?'✓ 安全模式':'普通模式') + ' status=' + resp.status + ']\n' + JSON.stringify(data, null, 2);
+    }
+    // XML
+    const xmlContent = ref('<root><data>Hello</data></root>');
+    const xmlResult = ref('');
+    function fillSpecialXml() {
+      xmlContent.value = "<?xml version='1.0'?><!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><root>&xxe;</root>";
+    }
+    async function parseXml(safe) {
+      const path = safe ? '/api/parse-config' : '/api/parse-xml';
+      const resp = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/xml' }, body: xmlContent.value, credentials: 'same-origin' });
+      const data = await resp.json().catch(() => ({}));
+      xmlResult.value = '[' + (safe?'✓ 安全模式':'普通模式') + ' status=' + resp.status + ']\n' + JSON.stringify(data, null, 2);
+    }
+    // Crypto
+    const cryptoData = ref('sensitive info');
+    const regUser = ref('test');
+    const regPass = ref('hello123');
+    const resetUser = ref('alice');
+    const cryptoResult = ref('');
+    async function doEncrypt(safe) {
+      const path = safe ? '/api/seal' : '/api/encrypt';
+      const { status, data } = await apiFetch('POST', path, { data: cryptoData.value });
+      cryptoResult.value = '[' + (safe?'✓ 安全模式':'普通模式') + ' encrypt]\n' + JSON.stringify(data, null, 2);
+    }
+    async function doRegister(safe) {
+      const path = safe ? '/api/signup' : '/api/register';
+      const { status, data } = await apiFetch('POST', path, { username: regUser.value, password: regPass.value });
+      cryptoResult.value = '[' + (safe?'✓ 安全模式':'普通模式') + ' register]\n' + JSON.stringify(data, null, 2);
+    }
+    async function doResetToken(safe) {
+      const path = safe ? '/api/password/reset?username=' : '/api/reset-token?username=';
+      const { status, data } = await apiFetch('POST', path + encodeURIComponent(resetUser.value));
+      cryptoResult.value = '[' + (safe?'✓ 安全模式':'普通模式') + ' reset-token]\n' + JSON.stringify(data, null, 2);
+    }
+    // NoSQL
+    const nosqlQuery = ref('{"username":"alice","password":"alice123"}');
+    const nosqlResult = ref('');
+    function fillNosqlBypass() {
+      nosqlQuery.value = '{"username":{"$ne":""},"password":{"$ne":""}}';
+    }
+    async function doNosqlLogin(safe) {
+      const path = safe ? '/api/mongo/auth' : '/api/mongo/login';
+      try {
+        const query = JSON.parse(nosqlQuery.value);
+        const { status, data } = await apiFetch('POST', path, query);
+        nosqlResult.value = '[' + (safe?'✓ 安全模式':'普通模式') + ' status=' + status + ']\n' + JSON.stringify(data, null, 2);
+      } catch (e) { nosqlResult.value = 'JSON 解析错误: ' + e.message; }
+    }
+    return { tab, jwtToken, jwtResult, verifyJwt, ssrfUrl, ssrfResult, doSsrf, uploadFile, uploadResult, doUpload, xmlContent, xmlResult, fillSpecialXml, parseXml, cryptoData, regUser, regPass, resetUser, cryptoResult, doEncrypt, doRegister, doResetToken, nosqlQuery, nosqlResult, fillNosqlBypass, doNosqlLogin };
+  }
+};
+
+// ── Router ──
+const routes = [
+  { path: '/', redirect: '/login' },
+  { path: '/login', component: LoginPage },
+  { path: '/dashboard', component: DashboardPage, meta: { requiresAuth: true } },
+  { path: '/orders', component: OrdersPage, meta: { requiresAuth: true } },
+  { path: '/orders/new', component: NewOrderPage, meta: { requiresAuth: true } },
+  { path: '/orders/:id', component: OrderDetailPage, meta: { requiresAuth: true } },
+  { path: '/profile', component: ProfilePage, meta: { requiresAuth: true } },
+  // New tool pages
+  { path: '/users', component: UsersPage, meta: { requiresAuth: true } },
+  { path: '/products', component: ProductsPage, meta: { requiresAuth: true } },
+  { path: '/files', component: FilesPage, meta: { requiresAuth: true } },
+  { path: '/transfer', component: TransferPage, meta: { requiresAuth: true } },
+  { path: '/render', component: RenderPage, meta: { requiresAuth: true } },
+  { path: '/import', component: ImportPage, meta: { requiresAuth: true } },
+  { path: '/security-tools', component: SecurityToolsPage, meta: { requiresAuth: true } },
+];
+
+const router = createRouter({
+  history: createWebHashHistory(),
+  routes
+});
+
+// Auth guard
+router.beforeEach((to) => {
+  if (to.meta.requiresAuth && !auth.loggedIn) {
+    return '/login';
+  }
+});
+
+// ── App ──
+const app = createApp({
+  setup() {
+    function logout() {
+      auth.loggedIn = false;
+      auth.username = '';
+      localStorage.removeItem('easyshop_logged');
+      localStorage.removeItem('easyshop_user');
+      router.push('/login');
+    }
+    const showTools = ref(false);
+    return { token: computed(() => auth.loggedIn), username: computed(() => auth.username), logout, showTools };
+  }
+});
+app.use(router);
+app.mount('#app');
+</script>
+</body>
+</html>

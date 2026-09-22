@@ -4,7 +4,7 @@
 
 [![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Professional-blue)](https://portswigger.net/burp)
 [![Java](https://img.shields.io/badge/Java-17-orange)](https://openjdk.org/)
-[![Version](https://img.shields.io/badge/version-1.0-green)](#)
+[![Version](https://img.shields.io/badge/version-1.1-green)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -20,6 +20,7 @@
 - [项目背景](#项目背景)
 - [核心能力](#核心能力)
 - [快速开始](#快速开始)
+- [📚 深入文档](#-深入文档)
 - [整体架构与设计哲学](#整体架构与设计哲学)
 - [核心引擎：AI 分析](#核心引擎ai-分析)
   - [Pipeline 模式（6 阶段固定流水线）](#pipeline-模式6-阶段固定流水线)
@@ -29,19 +30,25 @@
 - [三种分析模式对比](#三种分析模式对比)
 - [内嵌 Repeater 与测试用例管理](#内嵌-repeater-与测试用例管理)
 - [任务队列与批量分析](#任务队列与批量分析)
+- [🤖 浏览器自动化探索](#-浏览器自动化探索)
+- [扩展能力](#扩展能力)
 - [高级功能](#高级功能)
   - [MCP Server（让 Claude 调用）](#mcp-server让-claude-调用)
   - [OOB 盲 SSRF 检测](#oob-盲-ssrf-检测)
   - [Intruder AI 载荷生成](#intruder-ai-载荷生成)
   - [WAF 识别与绕过](#waf-识别与绕过)
   - [IDOR 身份审计](#idor-身份审计)
+- [Benchmark 评测体系](#benchmark-评测体系)
 - [使用流程](#使用流程)
 - [配置](#配置)
 - [匹配模式与接口识别](#匹配模式与接口识别)
 - [构建](#构建)
 - [FAQ](#faq)
 - [限制](#限制)
+- [🎮 游戏化元素](#-游戏化元素)
 - [致谢与第三方引用](#致谢与第三方引用)
+- [独立运行（CLI 模式）](#独立运行cli-模式)
+- [预算管理](#预算管理)
 - [许可证](#许可证)
 
 ---
@@ -60,7 +67,7 @@ Burp Suite 官方在 2026.7 版本引入了 [Burp AT](https://portswigger.net/bu
 
 **全自动分析**：从流量捕获到漏洞验证，一条 Pipeline 跑到底，无需人工干预。
 
-**AI 自主决策**：Agent 模式下 LLM 自主调度 33 个工具进行深度分析，每一步推理可见。
+**AI 自主决策**：Agent 模式下 LLM 自主调度 **52** 个工具进行深度分析，每一步推理可见。
 
 **零误报优先**：三层防幻觉防御（Prompt 规则 → 程序化交叉校验 → 身份审计），`confirmed` 漏洞必须有真实 payload 触发异常的证据，`overall_risk=HIGH` 需有存活 confirmed，否则自动降级。
 
@@ -68,13 +75,19 @@ Burp Suite 官方在 2026.7 版本引入了 [Burp AT](https://portswigger.net/bu
 
 **本地零成本检测**：所有流量实时过 13 类正则检测（SQL 错误/堆栈/安全头/JWT/CORS/CSRF 等），不耗 AI token。
 
-**越权检测**：多 session 比对 + IDOR 资源 ID 替换 + 未授权访问，Jaccard 相似度判定，灰色区间自动触发 LLM 仲裁。
+**越权检测**：支持 3 会话（A/B/C）多层级权限测试，两两配对（C(N,2)）。Cookie + Auth Headers（Bearer/X-Token/API-Key）双通道凭证，域名作用域隔离，权限等级（HIGH/MEDIUM/LOW）+ 组/租户标识自动区分水平越权 vs 垂直越权 vs 跨租户越权。IDOR 扫描覆盖 URL path + query 参数 + JSON body。LED 指示灯实时验证会话存活。Jaccard 相似度判定，灰色区间自动触发 LLM 仲裁。
 
-**防幻觉交叉验证**：LLM 声称的 confirmed 漏洞需经过程序化校验 —— payload 是否真实发送、是否触发异常、是否被 WAF 拦截、越权类是否有身份证据。
+**防幻觉交叉验证**：LLM 声称的 confirmed 漏洞需经过程序化校验 —— payload 按 `citedExecutionIndex` 绑定真实 PayloadResult、evidence 必须是真实 response 的字面子串、越权类需双会话对比、`anomalyDetected` 不再被改写（改用 `claimedByVerdict` 保留原始观测值）。
+
+**不可信内容围栏**：每次分析生成随机 nonce，`UntrustedContent.wrap()` 包裹所有攻击者可控数据（HTTP 响应、DOM、源码注释、grep 命中），防止 prompt injection 伪造围栏标记。
+
+**Prompt Caching**：Claude 三断点缓存（tools schema / system prompt / conversation history），单端点 input 成本 **-50~70%**。
 
 **WAF 识别与绕过**：12 厂商 WAF 签名被动识别，被拦截 payload 自动尝试编码变体重试。
 
-**MCP Server**：将插件暴露为 MCP 端点，让本地 Claude Code 查询接口、触发分析、检索源码。
+**MCP Server**：将插件暴露为 MCP 端点（Bearer token 认证 + CSRF/DNS rebinding 防护），让 Claude Code / Codex / Qoder 等 MCP 客户端查询接口、触发分析、检索源码，并通过 `validate_findings` 对外部 AI 的发现做防幻觉校验。
+
+**Benchmark 评测**：内置 53 端点靶场（32 真漏洞 + 21 安全对照），自动跑出 recall/precision/FP rate/F1，防回归。
 
 ---
 
@@ -82,11 +95,13 @@ Burp Suite 官方在 2026.7 版本引入了 [Burp AT](https://portswigger.net/bu
 
 ### 1. 安装
 
-从 **[GitHub Releases](https://github.com/Flechzao/API-Sentinel/releases)** 下载最新的 `API-Sentinel-1.0.jar`，然后：
+从 **[GitHub Releases](https://github.com/Flechzao/API-Sentinel/releases)** 下载最新的 `API-Sentinel` jar 包（约 41MB），然后：
 
-`Burp Suite → Extensions → Add → Extension type: Java → 选择 API-Sentinel-1.0.jar`
+`Burp Suite → Extensions → Add → Extension type: Java → 选择下载的 jar 文件`
 
 加载后顶部出现 `API Sentinel` 标签页。
+
+> **制品体积说明：** jar 约 41MB，其中约一半是浏览器自动化引擎（Playwright Node.js 驱动），用于 `browser_login`、`browser_explore` 等工具。驱动在首次使用时自动提取到 `~/.api-sentinel/playwright-driver/`，无需手动安装。如果不需要浏览器功能，可以在设置中关闭 `browserEnabled`。
 
 > 推荐 **Burp Suite Professional**（OOB Collaborator 依赖专业版；其余功能 Community 也可用）。
 
@@ -113,10 +128,10 @@ Burp Suite 官方在 2026.7 版本引入了 [Burp AT](https://portswigger.net/bu
 
 ### 4. 用 demo 靶场快速体验（推荐新手）
 
-仓库自带一个**刻意植入漏洞的演示应用** `demo-vuln-app/`（Spring Boot，覆盖 SQLi / XSS / IDOR / 越权 / 竞态 / 不安全随机数等 30+ 接口），适合在**本地、合法、可控**的环境里快速体验完整流程：
+仓库自带一个**刻意植入漏洞的演示应用** `easyshop-app/`（Spring Boot，包含 53 个靶场接口，覆盖 SQLi / XSS / IDOR / 越权 / 竞态 / 不安全随机数等；当前实测评分集为其中 44 个），适合在**本地、合法、可控**的环境里快速体验完整流程：
 
 ```bash
-cd demo-vuln-app
+cd easyshop-app
 mvn spring-boot:run        # 默认监听 http://localhost:8089（见 src/main/resources/application.properties）
 ```
 
@@ -125,6 +140,30 @@ mvn spring-boot:run        # 默认监听 http://localhost:8089（见 src/main/r
 3. 观察 Agent 逐步推理 → 生成 payload → 实测验证 → 出报告
 
 > ⚠️ 该靶场仅用于本地学习/演示，请勿部署到公网。靶场含故意硬编码的弱密钥/凭证，均为演示用途。
+
+---
+
+## 📚 深入文档
+
+本 README 提供快速开始和概览。完整的设计、规格、功能参考和交互式架构图位于 `docs/` 目录：
+
+| 文档 | 内容 |
+|------|------|
+| **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | 架构手册（规格+代码架构+ADR 决策+开发工具链，四合一） |
+| **[docs/FEATURES.md](docs/FEATURES.md)** | 功能参考（被动检测规则、50+ 工具参数、自定义模板、WAF、组件指纹） |
+| **[docs/BROWSER.md](docs/BROWSER.md)** | 浏览器手册（Playwright/Chromium 安装 + agent-browser 集成） |
+| **[docs/THIRD-PARTY.md](docs/THIRD-PARTY.md)** | 第三方致谢与许可证 |
+| **[docs/diagrams/](docs/diagrams/README.md)** | 4 张交互式架构图（Archify 生成，可点击/缩放/切换视图） |
+
+**交互式架构图预览**：
+
+```bash
+# 浏览器打开即可交互（点击组件高亮关联连接、切换预设视图、缩放拖拽）
+open docs/diagrams/api-sentinel-architecture.html  # 组件总览
+open docs/diagrams/api-analysis-sequence.html      # 时序图
+open docs/diagrams/mcp-session-workflow.html       # MCP 会话
+open docs/diagrams/findings-dataflow.html          # 数据流
+```
 
 ---
 
@@ -142,38 +181,35 @@ mvn spring-boot:run        # 默认监听 http://localhost:8089（见 src/main/r
 
 ### 架构图
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       Burp Suite                            │
-│   Proxy History ──► API Sentinel 流量捕获                    │
-│                          │                                  │
-│                          ▼                                  │
-│              ┌───────────────────────┐                     │
-│              │  接口归一化 / 聚合     │  {id} 参数化路由    │
-│              │  (Trie + 模糊匹配)     │  相同模式归一成一条  │
-│              └───────────┬───────────┘                     │
-│                          │                                  │
-│   ┌──────────────────────┴──────────────────────────┐     │
-│   │     被动检测层（实时，零 token）                  │     │
-│   │     启发式检测 / 敏感信息 / 未授权探测 / JWT     │     │
-│   └──────────────────────┬──────────────────────────┘     │
-│                          │                                  │
-│   ┌──────────────────────┴──────────────────────────┐     │
-│   │     分析引擎（3 种模式，按需触发）                │     │
-│   │     Pipeline(6阶段) / Agent(ReAct) / AI 对话      │     │
-│   └──────────────────────┬──────────────────────────┘     │
-│                          │                                  │
-│   ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐   │
-│   │  AI 推理     │  │  程序化验证   │  │  verdict 交叉验证│   │
-│   │ (LLM 调用)   │  │ (真实发送)    │  │  (防 LLM 幻觉)  │   │
-│   └─────────────┘  └──────────────┘  └─────────────────┘   │
-│                          ▼                                  │
-│              ┌───────────────────────┐                     │
-│              │  结果展示 + Repeater  │  步骤视图可见        │
-│              │  + 报告导出            │                      │
-│              └───────────────────────┘                     │
-└─────────────────────────────────────────────────────────────┘
-```
+![API Sentinel 架构总览](docs/images/api-sentinel-arch.svg)
+
+> 可选本地交互版：[架构交互图](docs/diagrams/api-sentinel-architecture.html)（组件关联高亮、切换视图、缩放），需下载后在本地浏览器打开。
+
+**数据流**：流量入口（Burp Proxy 捕获）→ 接口归一化（Trie+模糊匹配）→ 被动检测层（零 token 实时）→ 分析引擎（Pipeline 6 阶段 / Agent ReAct / AI 对话三模式）→ 结论校验（AI 推理 + 程序化验证 + verdict 交叉验证，防幻觉）→ 结果输出（表格/卡片/Repeater/报告）。
+
+### 深入机制图
+
+下面三张 SVG 在正文中直接展示 Agent 的核心机制。各图后的 HTML 链接仅为可选交互版，需下载后在本地浏览器打开。
+
+**① Agent 主循环内部**
+
+![Agent 主循环内部](docs/images/agent-loop-internals.svg)
+
+> 可选本地交互版：[Agent 主循环内部](docs/diagrams/agent-loop-internals.html)（下载后在本地浏览器打开）。
+
+**② 反幻觉防御**
+
+![反幻觉防御](docs/images/anti-hallucination-defense.svg)
+
+> 可选本地交互版：[反幻觉防御](docs/diagrams/anti-hallucination-defense.html)（下载后在本地浏览器打开）。
+
+**③ 代码关联与污点分析**
+
+![代码关联与污点分析](docs/images/code-correlation-taint.svg)
+
+> 可选本地交互版：[代码关联与污点分析](docs/diagrams/code-correlation-taint.html)（下载后在本地浏览器打开）。
+
+> ⚠️ 污点回溯为**正则启发式**，非真实数据流分析；每一跳都需 `read_file` 核实，关联出的链最终交 `verify_*` 实测才算证据。
 
 ### 数据流
 
@@ -227,7 +263,7 @@ LLM 分析单个 HTTP 请求/响应对，识别可疑线索。**不引入源码*
 从已索引的代码仓库查找匹配路由的后端源码。支持 Java（Spring 注解解析）、Python（Flask/Django 路由解析）、Node.js（Express 路由解析）。
 
 - 先用 Trie 路由匹配找到对应的 controller 方法
-- **SinkMap 自动标记**：扫描代码中的 7 类危险 sink（SQL 拼接、命令执行、文件操作、反序列化、SSRF、弱加密/硬编码密钥、不安全随机数），在代码片段中标注 `[⚠ SQL SINK]` / `[⚠ WEAK CRYPTO]` / `[⚠ INSECURE RNG]` 等，引导 Agent 主动跟进 service 层
+- **SinkMap 自动标记**：扫描代码中的 12 类危险 sink（SQL 拼接、命令执行、文件操作、反序列化、SSRF、弱加密/硬编码密钥、不安全随机数、XXE、SSTI、CRLF注入、开放重定向、NoSQL注入），在代码片段中标注 `[⚠ SQL SINK]` / `[⚠ WEAK CRYPTO]` / `[⚠ INSECURE RNG]` 等，引导 Agent 主动跟进 service 层
 - Agent 工具 `find_definition` / `find_callers` 支持跨文件追踪调用链，发现隐藏在 service/DAO 层的逻辑漏洞
 - 源码变更后需手动重新索引
 
@@ -255,8 +291,10 @@ LLM 分析单个 HTTP 请求/响应对，识别可疑线索。**不引入源码*
 
 #### Stage 5：鉴权绕过测试（程序化，免费）
 
-- **多 session 发现**：从代理历史自动发现不同用户的 session（Cookie/Authorization 头）
-- **IDOR 测试**：替换资源 ID（数字/UUID），对比原始响应与替换后响应
+- **多 session 发现**：从代理历史自动发现不同用户的 session（Cookie / Authorization / X-Token / API-Key 等多种认证头），面板首次打开自动检测填充
+- **3 会话多层级测试**：支持 A/B/C 三组会话，两两配对测试（A↔B, A↔C, B↔C）；每组会话可设域名作用域（Cookie 域名隔离）、权限等级（HIGH/MEDIUM/LOW）、组/租户标识；系统自动标注测试类型：同级别+不同组=水平越权，不同级别+同组=垂直越权，不同级别+不同组=跨租户越权
+- **会话保活验证**：LED 指示灯（绿=有效 / 红=过期 / 黄=不可达 / 灰=未验证），保存后自动验证，向各会话域名发送带凭证的 GET 请求判断 token 是否仍然有效
+- **IDOR 测试**：替换资源 ID（URL path 数字/UUID + query 参数 + JSON body），覆盖 18 种常见 ID 参数名，path-pattern 优先匹配同模式的不同用户资源 ID
 - **未授权访问**：去掉所有认证头重放请求
 - **Jaccard 相似度判定**：3-gram 响应体相似度对比
   - ≥ 85%：VULNERABLE（越权确认）
@@ -276,8 +314,8 @@ LLM 分析单个 HTTP 请求/响应对，识别可疑线索。**不引入源码*
 
 当 Stage 1 发现 SQLi 线索但显错注入未触发时，自动按升级路径逐级验证：
 
-1. **布尔盲注**（`verify_boolean_blind`）：true/false 条件响应对比（2 个请求）
-2. **时序盲注**（`verify_timing_blind`）：SLEEP 计时，auto 模式逐 DB 尝试（≤6 个请求）
+1. **布尔盲注**（`verify_boolean_blind`）：true/false 条件响应对比，最多尝试 3 组（≤6 个请求）
+2. **时序盲注**（`verify_timing_blind`）：SLEEP 计时，auto 模式逐 DB 尝试并对疑似延迟重测基线（含复测最多 11 个请求）
 3. 两级都失败 → 结论中标注"未发现 SQL 注入"
 
 #### Stage 5.7：业务逻辑验证（默认关闭，安全子集）
@@ -358,6 +396,8 @@ Phase 5: overall_risk 降级
 
 与 Pipeline 的固定流程不同，Agent 让 LLM 自主决定分析路径。适合需要灵活深挖的单个接口。
 
+![Agent 自主调查整体流程](docs/images/agent-workflow.svg)
+
 ![Agent 步骤视图](docs/images/agent-steps.png)
 
 ![AI 对话视图](docs/images/chat.png)
@@ -422,7 +462,7 @@ Loop (最多 50 轮，安全断路器，正常分析远不到):
 - **异常**：任何异常都构建 fallback 结果（包含已收集的分析数据），不丢已有信息
 - **最大迭代**：达到 50 轮构建 fallback 结果，不会无限循环
 
-#### Agent 可用的 33 个工具
+#### Agent 可用的 52 个工具
 
 **侦察 / 代码理解（免费）**
 
@@ -456,8 +496,8 @@ Loop (最多 50 轮，安全断路器，正常分析远不到):
 | `send_request` | 发送 HTTP 请求验证疑似漏洞（内置 429 自适应限速） |
 | `test_auth_bypass` | 越权检测：多 session 交换 + IDOR 替换 + 未授权 |
 | `active_probe` | CORS Origin 变体 / JWT alg:none 重放 / CRLF / NoSQL |
-| `verify_boolean_blind` | 布尔盲注验证（10 种 payload 变体 + WAF 自动跳过，≤6 请求） |
-| `verify_timing_blind` | 时序盲注验证（SLEEP 计时 + 确认轮防抖动误报，≤8 请求） |
+| `verify_boolean_blind` | 布尔盲注验证（10 种内置变体中最多尝试 3 组，WAF 自动跳过，≤6 请求） |
+| `verify_timing_blind` | 时序盲注验证（SLEEP 计时 + 基线复测防抖动误报，auto 模式含复测最多 11 请求） |
 | `verify_xss_reflection` | XSS 反射验证（canary 注入 + 标签探针 + 上下文分类，2 请求） |
 | `verify_ssti` | SSTI 模板注入验证（7 引擎探针 + 控制请求防误报，≤8 请求） |
 | `verify_path_traversal` | 路径穿越验证（12 种编码变体 + 基线对比，≤12 请求） |
@@ -476,6 +516,29 @@ Loop (最多 50 轮，安全断路器，正常分析远不到):
 | `run_sandboxed_code` | 沙箱执行短脚本做纯计算验证（复现算法/编解码/密码学），不发请求 |
 | `ask_user` | 运行中向操作者提问（如沙箱执行确认） |
 | `submit_report` | 提交最终评估报告（需通过门禁） |
+
+**其余工具（浏览器套件 / 扩展能力 / 元信息）**
+
+| 工具 | 作用 |
+|------|------|
+| `list_attack_types` | 列出 27 种攻击类型 + 150+ payload（本地查表，零 LLM） |
+| `generate_poc` | 一键生成 PoC（cURL + Python + 复现步骤 + Markdown） |
+| `orchestrate_agents` | 多 Agent 协作（Planner/Explorer/Executor/Verifier 四角色） |
+| `custom_detection` | 加载 `custom-templates/` 下类 Nuclei 的 YAML 自定义检测模板 |
+| `scan_mcp_servers` | MCP server 端点安全扫描（7 端点并发 + SSRF 防护） |
+| `browser_discover` | 发现路由 + 静态 API（XHR/Fetch 捕获 + JS Bundle 分析） |
+| `browser_render` | 渲染页面取 DOM / console / CSP |
+| `browser_dom_xss` | DOM XSS 检测 |
+| `browser_find_page` | 三级定位触发目标 API 的页面 |
+| `browser_interact` | UI 操作序列执行 + 确认弹窗 |
+| `register_discovered_apis` | 把浏览器发现的 API 注册进分析队列 |
+| `get_burp_scan_issues` | 读取 Burp Scanner 已发现的漏洞 issue |
+| `mine_history_idor` | 从代理历史挖掘疑似 IDOR 端点 |
+| `request_tools` | 列出当前可用工具清单（供 LLM 探查） |
+| `read_analysis_notes` | 读取分析笔记（跨工具共享上下文） |
+| `update_analysis_notes` | 更新分析笔记 |
+
+> `browser_login` / `browser_explore` / `browser_auto_crawl` 见[浏览器自动化探索](#-浏览器自动化探索)。完整 52 个工具由 `StandardToolRegistry` 统一注册。
 
 工具全部由 `StandardToolRegistry` 统一构建，Agent 模式和两个 Chat 模式共享同一套工具注册，确保行为一致。子 Agent（explore/chain-hunter）只能使用主 Agent 工具的**只读/发请求子集**，不能再次委派、不能提交报告，最终裁决权留在主循环。
 
@@ -553,7 +616,7 @@ fallback 报告，落盘 JSON/HTML 报告并刷新面板，**不会丢已有信�
 - **12 条 NEVER_CONFIRM 规则**：明确列出什么不算漏洞（缺安全头、CORS 通配符无凭证外带、仅 DNS 回连的 SSRF、仅报错回显的 SQLi 等）
 - **Kill Signals**：出现即降级停止深挖的判定条件（XSS 有 CSP 且无影响路径、IDOR 返回自己数据、SQLi 仅报错无数据等）
 - **链式升级表**：弱发现的升级路径（开放重定向→接 OAuth 窃取授权码、CORS 通配符→带凭证外带 PII 等）
-- **反注入标记**：`=== UNTRUSTED HTTP DATA ===` 包裹所有用户流量数据，防止 prompt injection
+- **不可信内容围栏**：`UntrustedContent.wrap(nonce, raw)` —— 每次分析生成随机 128-bit nonce，包裹所有攻击者可控数据（HTTP 响应、DOM、源码注释、grep 命中、chat 历史）。nonce 无法预测，攻击者无法伪造围栏标记关闭。同时剥离不可信内容中的分隔符模式（`===` 围栏、`## ` markdown 标题、`UNTRUSTED`/`反注入`/`输出格式` 等关键词），防止内容内伪造系统指令。
 
 同一规则三处消费，确保不会漂移：
 - Agent 的 `AgentLoop.buildSystemPrompt()` → 精简版（`AGENT_CONDENSED_RULES`）
@@ -562,7 +625,15 @@ fallback 报告，落盘 JSON/HTML 报告并刷新面板，**不会丢已有信�
 
 #### 第二层：程序化交叉校验（VerdictValidator）
 
-LLM 产出 verdict 后，逐条校验每个 confirmed 是否站得住脚。详见上文[Verdict 交叉验证](#verdict-交叉验证在-stage-6-之后)。
+LLM 产出 verdict 后，逐条校验每个 confirmed 是否站得住脚：
+
+- **payload 绑定**：confirmed 的 `citedExecutionIndex` 直接 O(1) 查到真实 PayloadResult；LLM 编造一个"从未发送"的 payload → 拒绝
+- **evidence 子串锚定**：`response_snippet` 必须是某个真实 `receivedResponse()` 的字面子串（多结果场景）；LLM 编造响应片段 → 拒绝
+- **越权双会话对比**：IDOR/auth-bypass 类检查不同 `authSession` 对同一 endpoint 的请求；缺少所需会话对比时拒绝确认
+- **WAF 拦截拒绝**：payload 被 WAF 拦截（waf_score ≥ 60）→ 异常信号不可信 → 降级为 suspected
+- **观测值不被改写**：`markConfirmedPayloads` 不再覆盖 `anomalyDetected`，改设 `claimedByVerdict` 字段；UI 显示合并两者（绿勾 = `anomalyDetected || claimedByVerdict`），审计/导出保留原始观测值
+
+> **当前边界**：响应片段检查在空引用、无响应体或仅单条结果等路径会跳过；多结果时可匹配任一响应体，并非严格绑定到引用索引的同一响应。越权类另走身份校验，旧记录也有兼容路径；这些规则降低误报，但不能独立证明身份归属或保证零幻觉。
 
 #### 第三层：身份审计（IDOR 专用）
 
@@ -642,20 +713,95 @@ Agent 和 AI 对话都走**步骤进度视图**（左步骤列表 + 右详情面
 
 ---
 
+## 🤖 浏览器自动化探索
+
+> 让 AI Agent 自动登录、智能导航、触发目标 API —— **无需研发提供截图和操作步骤**。
+
+传统流程需要研发手动登录后复制 Cookie、截图描述触发步骤。浏览器自动化能力让 Agent **全自主完成**：登录 → 探索页面 → 找到触发目标 API 的操作路径 → 缓存路径供后续复用。
+
+**零配置启动**：首次启用时，插件会自动提取 Playwright 驱动并检测系统安装的 Chrome/Edge/Chromium 浏览器，大多数用户无需任何额外配置即可使用。
+
+### 三大新工具
+
+| 工具 | 用途 | 示例 |
+|------|------|------|
+| `browser_login` | 自动登录，Cookie 注入 AppConfig | `browser_login(profile_name="生产环境")` |
+| `browser_explore` | LLM 智能探索多层菜单触发目标 API | `browser_explore(target_api="POST /api/v1/roles", start_url="http://app/")` |
+| `browser_auto_crawl` | 一键全站扫描：登录→发现→探索→注册 | `browser_auto_crawl(start_url="http://app/")` |
+
+### 🧠 视觉模型支持（DeepSeek-V4-Flash-Vision-Exp）
+
+集成 DeepSeek 视觉模型后，`browser_explore` 在每一步会**同时发送截图 + DOM 元素**给视觉模型，让 LLM "看到"页面后再做决策：
+
+- **识别复杂 UI**：嵌套菜单、弹窗、Tab 切换、hover 展开
+- **不依赖 selector**：视觉理解按钮含义，对中文界面/图标按钮更准确
+- **降级策略**：截图失败自动回退纯文本模式
+
+**配置**：AI 设置面板 → 服务商选择 "deepseek" → 轻量模型自动填入 `DeepSeek-V4-Flash-Vision-Exp`
+
+### 工作原理
+
+```
+browser_auto_crawl 流程:
+  1. browser_login → 自动登录 (支持 SSO/BUC)
+  2. browser_discover → 发现所有路由 + 静态 API
+  3. 对每个 API → browser_explore:
+     ├── DomSimplifier → 提取 80 个可交互元素
+     ├── 📸 截图 (视觉模型)
+     ├── LLM 决策 → click/fill/hover/back
+     ├── 执行动作 → 检查是否触发目标
+     └── 循环直到成功 (路径缓存到磁盘)
+  4. register_discovered_apis → 注册到分析队列
+```
+
+详见 [BROWSER.md](docs/BROWSER.md)。
+
+---
+
+## 扩展能力
+
+基于 25+ 开源项目调研，API Sentinel 提供 8 项扩展能力，并配套安全加固与性能优化（详见 [CHANGELOG.md](CHANGELOG.md)）：
+
+| 能力 | Agent 工具 | 说明 |
+|------|-----------|------|
+| 攻击类型分类（27 种）+ Payload 库（150+） | `list_attack_types` | OWASP API Top 10 全覆盖，零 LLM 本地查表 |
+| PoC 自动生成（15+ 漏洞类型） | `generate_poc` | 一键生成 cURL + Python + 复现步骤 + Markdown 报告 |
+| 多 Agent 协作 | `orchestrate_agents` | Planner/Explorer/Executor/Verifier 四角色工作流 |
+| 自定义检测模板（YAML DSL，类 Nuclei） | `custom_detection` | `custom-templates/` 零代码加载，regex/word/status 匹配器 |
+| MCP 服务器安全扫描 | `scan_mcp_servers` | 7 端点并发探测 + SSRF 防护 + 风险评估 |
+| IDOR/BOLA 检测增强 | — | 6 种 ID 格式 + 16 种 owner 字段 + 置信度评分 |
+| Mass Assignment / 过度数据暴露 | — | `HeuristicDetector` 新增两种检测模式 |
+
+**安全加固**：MCP 扫描 SSRF 防护（拒绝云元数据/链路本地目标）、PoC 生成命令/代码注入防护、自定义正则 ReDoS 防护、nonce 围栏防 prompt injection。
+**性能**：检测正则 Pattern 预编译缓存、MCP 扫描并发化（最坏 70s→~10s）、Ollama 可用性缓存。
+**质量**：全量 1231 测试通过（1233 用例，2 跳过，0 失败）。
+
+---
+
 ## 高级功能
 
 ### MCP Server（让 Claude 调用）
 
-将 API-Sentinel 暴露为 MCP Server（仅绑定 127.0.0.1，JDK 内置 HttpServer 实现，零额外依赖），让本地 Claude Code 把插件能力当工具调用。
+将 API-Sentinel 暴露为 MCP Server（仅绑定 127.0.0.1，基于 JDK `ServerSocket` 实现，零额外传输依赖），让 Claude Code / Codex / Qoder 等 MCP 客户端把插件能力当工具调用；不依赖 Burp 精简 JRE 中可能缺失的 `jdk.httpserver` 模块。
 
-**配置**：`config.json` 设 `mcpServerEnabled=true`（可选端口 `mcpServerPort`，默认 9877），重载扩展后生效。
+**安全防护**（P2-8）：
+- **Bearer token 认证**：默认开启（`mcpRequireAuth=true`）；首次需要时生成随机 256-bit token 并持久化，重启后复用。客户端携带 `Authorization: Bearer <token>`，完整 token 从 MCP 设置面板查看或复制；普通启动日志仅显示前缀
+- **CSRF 防护**：拒绝带非空 `Origin` 头的请求（`text/plain` 无预检，可被恶意页面 POST）
+- **DNS rebinding 防护**：要求 `Host` 头精确等于 `127.0.0.1:<port>` 或 `localhost:<port>`
+- **Content-Type 校验**：要求 `application/json`（额外 CSRF 层）
+
+**配置**：在「设置 → MCP」启停服务或修改端口，立即生效（`mcpServerEnabled` / `mcpServerPort`，默认端口 9877）。若直接编辑 `config.json`，需重载扩展读取新配置；在 MCP 设置面板复制 token 或客户端配置。
 
 **Claude Code 配置**（`.mcp.json`）：
 ```json
-{ "mcpServers": { "api-sentinel": { "type": "http", "url": "http://127.0.0.1:9877/mcp" } } }
+{ "mcpServers": { "api-sentinel": {
+  "type": "http",
+  "url": "http://127.0.0.1:9877/mcp",
+  "headers": { "Authorization": "Bearer <从MCP设置面板复制token>" }
+} } }
 ```
 
-**暴露的 7 个工具**：
+**核心暴露工具**（下表是策展的原生工具；MCP 会话建立后还会叠加内置 Agent 的全套工具——发包/主动探测/盲注验证/浏览器登录交互探索等，与插件内置 AI 对话同构）：
 
 | 工具 | 类型 | 说明 |
 |------|------|------|
@@ -663,16 +809,53 @@ Agent 和 AI 对话都走**步骤进度视图**（左步骤列表 + 右详情面
 | `get_api_detail` | 只读 | 获取单个接口详情 + 最新 verdict |
 | `get_passive_findings` | 只读 | 获取被动检测发现 |
 | `get_analysis_history` | 只读 | 获取 AI 分析历史 |
+| `search_code` | 检索 | 正则 grep 已索引代码仓库（含 ReDoS 防护） |
+| `get_source_code` | 检索 | 按路径获取后端源码（端点 → Controller） |
+| `get_untracked_apis` | 检索 | 代码路由 ↔ 流量比对，找出从未触发的接口 |
 | `analyze_api` | 分析触发 | 触发真实 Pipeline/Agent 分析，等待完成返回 verdict（并发上限 2，最长 600s） |
-| `search_code` | 检索 | 正则 grep 已索引代码仓库 |
-| `get_source_code` | 检索 | 按路径获取后端源码 |
+| `analyze_batch` | 分析触发 | 批量触发分析（并发上限 2） |
+| `get_latest_events` | 事件 | 轮询分析完成事件（poll 模型） |
+| `ingest_traffic` | 数据摄入 | 外部大脑把在 Burp 代理之外发现的接口（path/method/域名/请求/响应）回灌进插件，自动建/更新 entry 并显示到 API 表格，随后可分析 |
+| `validate_findings` | **校验门禁** | **外部 AI 产出的发现 + 请求记录 → 两层校验（证据结构 + 记录一致性）→ 返回带降级理由的 verdict，见下。** |
 
-**使用示例**（配好后在 Claude Code 里直接对话）：
+> **会话化全量工具**：MCP 客户端 `initialize` 后拿到 `Mcp-Session-Id`，后续调用携带它即获得一个有状态会话（持久 ToolContext + 浏览器页面 + 分析笔记）。此时 `tools/list` 会在上表之外叠加内置 Agent 的全套工具（`send_request`/`active_probe`/`verify_*`/`browser_login`/`browser_interact`/`browser_explore` 等），与插件内置 AI 对话能力对齐。其中**主动/攻击类工具默认关闭**，需在「设置 → MCP」勾选「允许外部客户端调用主动/攻击类工具」(`mcpAllowActiveTools`) 才暴露——因为这让外部大脑可借 Burp 发真实攻击流量，仅在授权测试中开启。
+
+资产、白盒和被动检测工具补充了通用流量桥的领域语义；`validate_findings` 是**防幻觉校验门禁**：`EvidenceSchema` 检查已定义漏洞类型的必需证据字段，`VerdictValidator` 检查 payload 与所提供记录的匹配、响应片段、身份说明及风险降级条件；不满足要求的发现降为疑似，并给出结构化的 `rejectionReasons`。
+
+> **信任边界**：此入口接受客户端提交的请求/响应记录，校验通过不等于独立证明请求真实发生。未定义 schema 的类型仍交给通用校验；部分响应和旧记录路径有宽松处理，不能将门禁视为绝对真实性保证。应保留可复核的原始流量并人工复验关键发现。官方 Burp MCP 可作为查历史/重发的流量桥配合使用。
+
+**使用示例**（配好后在 MCP 客户端里直接对话）：
 ```
 你：列出 api.example.com 上所有已捕获的接口
 你：深入分析 /api/users/{id}，看有没有越权
 你：这个接口的后端源码长什么样？
+你：（外脑模式）我怀疑 /api/order/detail 存在 IDOR，我已用 alice/bob 两个会话各发了一次请求，
+    帮我把发现和这两条请求提交给 validate_findings 校验一下能不能确认
 ```
+
+#### 用 Qoder / Codex / 其它 MCP 客户端连接
+
+MCP 是开放协议，本 Server 走标准 Streamable HTTP，**任何支持 MCP + HTTP 传输的客户端都能连**，配置同构：
+
+- **Qoder**：设置 → MCP（或 `mcp.json`）新增一个 HTTP 类型的 server：
+  ```json
+  { "mcpServers": { "api-sentinel": {
+    "type": "http",
+    "url": "http://127.0.0.1:9877/mcp",
+    "headers": { "Authorization": "Bearer <从MCP设置面板复制token>" }
+  } } }
+  ```
+- **Codex**：在其 MCP 配置中加入同样的 `url` + `Authorization` 头即可。
+- 只支持 stdio 传输的客户端：需外挂一个 `mcp-remote` 之类的 stdio↔HTTP 桥。
+
+**连接前检查清单**：
+1. 在「设置 → MCP」启用服务（立即生效）；直接编辑 `config.json` 时设 `mcpServerEnabled=true` 并重载扩展；
+2. 在 MCP 设置面板复制完整 token 或客户端配置，普通启动日志只有 token 前缀，不能用于认证；
+3. 保持端口一致（默认 9877）；客户端所在机器需与 Burp 同机（仅绑定 `127.0.0.1`）；
+4. 客户端里执行 `tools/list` 应能看到上表的原生工具（会话建立后还会叠加内置 Agent 全套工具），说明握手成功。
+5. （可选）同时开启 Burp 官方 MCP 做流量桥（查历史/重发）——API Sentinel 自身 MCP **不依赖它**即可启动与工作（独立 ServerSocket，零额外传输依赖），但两者组合可让外部 AI 直接复用 Burp 原生流量能力。
+
+> 双模式：连得上 MCP 客户端（Qoder/Codex/Claude Code）→ **外脑模式**，客户端当大脑、插件当证据基础设施；连不上（只有本地裸模型 Ollama/DeepSeek，无 harness）→ 用插件内置的 Agent/Pipeline **自带引擎模式**。MCP 与内置对话的能力对齐已实现（P0+P1+P2 全部完成，见 [CHANGELOG.md](CHANGELOG.md)）。
 
 ### OOB 盲 SSRF 检测
 
@@ -701,6 +884,51 @@ Agent 和 AI 对话都走**步骤进度视图**（左步骤列表 + 右详情面
 ### IDOR 身份审计
 
 越权类 confirmed 必须附身份证据（`identity_proof` 三问，详见[防幻觉第三层：身份审计](#第三层身份审计idor-专用)），缺失自动降级 `identity_not_proven`。verdict 带 `rejection_reasons` 审计轨迹 + CVSS，并与 Stage 5 鉴权测试双向交叉（SAFE 冲突提醒/漏报提醒）。
+
+---
+
+## Benchmark 评测体系
+
+API-Sentinel 内置 53 端点靶场（`easyshop-app/`，32 真漏洞 + 21 安全对照），自动跑出 recall / precision / FP rate / F1，防止代码改动导致检出率退化。
+
+详见 [docs/benchmark/README.md](docs/benchmark/README.md)。
+
+API-Sentinel 区分 **candidate（候选发现）** 与 **confirmed（通过当前校验规则）** 两层结论，目标是让 confirmed 有可复现证据支撑；不满足校验要求者降级为 suspected 并附结构化降级理由。通过门禁仍不替代人工复验。
+
+**最新 benchmark 实测**（2026-09-06，DeepSeek-V4-Pro + V4-Flash，candidate 层；评分集 44/53 = 27 漏洞 + 17 安全端点）：
+
+| 指标 | 数值 |
+|---|---|
+| Recall | 92.6% (25/27) |
+| Precision | 69.4% (25/36) |
+| FP rate（secure 端点被误报） | 64.7% (11/17) |
+| F1 | 0.794 |
+
+> **candidate 评分口径**：将 confirmed 与 suspected 合并，按端点是否存在非 INFO/NONE 发现计分，不要求发现类型与靶场标注一致。因此它衡量候选端点覆盖，不等同于漏洞类型识别准确率。
+
+**三门验证框架效果**（115 份分析报告，2026-09-18 前生成，配套论文数据；共 193 个候选发现，其中 67 confirmed、126 suspected）：
+
+| 指标 | 数值 |
+|---|---|
+| Suspected 占比（模型自报疑似 + 门禁降级） | 65.3% (126/193) |
+| 门禁对 confirmed 声称的拦截率（带降级记录的 19 份报告） | 70% (21/30) |
+| Confirmed Precision | 100% (14/14) |
+| Confirmed Recall | 51.9% (14/27) |
+| Secure 端点 confirmed 误报 | 0% (0/17) |
+| 源码白盒对 confirmed 的贡献 | ~70%（消融实验） |
+
+**65.3% 的 suspected 占比不是门禁拦截率**：它同时包含模型原本就标为疑似的发现与门禁降级结果。**70% (21/30)** 才是带降级记录的 19 份报告中 confirmed 声称的拦截比例；115 份报告的发现总量与评分端点的 precision/recall 使用不同分母。
+
+> 框架把假设与确认分开：candidate 召回 92.6% 表示该评分集中的候选端点覆盖；confirmed 精度 100% 是本次 14/14 小样本结果，同时 confirmed 召回仅 51.9%，不代表其他目标上普遍零误报。消融实验显示源码访问贡献了约 70% 的 confirmed 发现（SQLi 9→0、越权 4→1，无源码时几乎无法确认）。
+
+**与模板扫描器对比**：同一靶场上 Nuclei v3.11.1（7,036 模板，10,744 请求）仅检出 1 个低危（Tomcat 堆栈泄露）——靶场是定制 Spring Boot 应用，漏洞不匹配任何内置模板，体现 AI 驱动与模板驱动的互补性。
+
+**快速跑一次**：
+```bash
+cd easyshop-app && mvn spring-boot:run   # 启动靶场
+BENCHMARK_ENABLED=true ./gradlew test --tests BenchmarkIntegrationTest  # 跑评测
+cat build/benchmark-report.txt  # 看报告
+```
 
 ---
 
@@ -746,6 +974,8 @@ CSV / Markdown / 完整报告，支持"导出选中行/全部"。
 | `code-index.json` | 代码仓库倒排索引缓存 |
 | `sensitive-rules.json` | 用户自定义敏感信息检测规则 |
 
+各类配置文件的可运行模板见 **[examples/](examples/README.md)**（ai-config / config / mcp-client / login-profiles / 自定义敏感规则）。
+
 **AI 配置**：设置 ⚙ → AI 设置，填服务商（claude/openai/ollama）、endpoint、apiKey、model，点"测试连接"验证。
 
 **检测开关**：顶部工具栏 → 检测组 → 敏感信息 / 越权检查 / OOB探针 复选框。
@@ -772,7 +1002,7 @@ CSV / Markdown / 完整报告，支持"导出选中行/全部"。
 ```bash
 # 需 JDK 17（确保 java 17 在 PATH，或手动指定 JAVA_HOME）
 ./gradlew shadowJar
-# 产物：dist/API-Sentinel-1.0.jar
+# 产物：dist/API-Sentinel-<version>.jar
 ```
 
 ```bash
@@ -781,6 +1011,8 @@ JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew shadowJar
 ```
 
 Burp Montoya API 已 vendored 在 `libs/`（Apache 2.0，见 [docs/THIRD-PARTY.md](docs/THIRD-PARTY.md)），clone 后可直接离线构建，无需联网拉取该依赖。
+
+> **发布构建**：shadowJar 只内嵌当前构建 OS 的 Playwright 驱动（单 jar ~43MB，跨平台会失效）。公共发布按平台分别出制品——详见 [docs/RELEASING.md](docs/RELEASING.md)（含 GitHub Actions 多平台矩阵与切发版清单）。
 
 ---
 
@@ -804,14 +1036,38 @@ A: 设置 → 回连平台 → 选 internal → 填基础域名 + 可选测试 U
 **Q: 如何便携/隔离多套环境？**
 A: 设环境变量 `API_SENTINEL_HOME=/path/to/dir`。
 
+**Q: 卸载插件后内存没有回退？**
+A: 这是 Burp Suite 的已知行为，不是插件内存泄漏。Burp 的扩展类加载器（Extension ClassLoader）在卸载后不会立即回收，相关的 `HttpClient` 线程池、浏览器进程等需要等 JVM GC 才能释放。插件已在卸载时做了最佳努力清理（关闭 HttpClient、关闭浏览器进程、取消 Event Bus 订阅、flush 数据），但 Burp 本身的类加载器缓存机制导致内存不会立即下降。**完全释放内存需要重启 Burp。**
+
+**Q: 使用浏览器功能需要额外安装什么？**
+A: jar 内置 Playwright 驱动（Node.js），首次启用时自动提取；浏览器可执行文件另行检测，优先使用已配置路径，其次查找已安装的 Playwright Chromium 和系统 Chrome/Edge/Chromium。自动检测成功时无需手工填路径；未找到可用浏览器时，需安装浏览器或在「设置 → Chrome Path」指定现有安装，例如：
+- macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+- Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`
+
 ---
 
 ## 限制
 
 - AI 分析质量取决于所配置的 LLM；建议 Claude Sonnet / GPT-4o 级别
-- 盲 SSRF 命中判断当前需人工查平台（无自动回连查询）
+- internal dnslog 模式的盲 SSRF 命中需人工查平台（Collaborator 模式每 30s 自动轮询，零人工）
 - 源码关联需先在"代码仓库"索引仓库（支持 Java/Python/Node）；源码变更后需手动重新索引
 - 模糊匹配不识别占位符（设计如此，用精确匹配处理参数化路由）
+- 卸载插件后 Burp 内存不会立即回退（Burp 类加载器机制限制，需重启 Burp 完全释放）
+- 浏览器功能需要本机有可用的 Chromium/Chrome/Edge；自动检测失败时，需安装浏览器或在设置中指定路径
+
+---
+
+## 🎮 游戏化元素
+
+API Sentinel 把枯燥的漏洞验证做成了带正反馈的"收集"体验（设置中可关闭 `effectsEnabled`）：
+
+- **成就系统**：首次发现 XSS / SQLi / IDOR / SSRF 等解锁成就，按稀有度分级，分析过程中实时弹窗
+- **漏洞图鉴**：每确认一种新漏洞类型即点亮一条图鉴（类 Pokédex，覆盖注入/越权/配置/逻辑全类别），可看收集进度
+- **粒子特效**：确认 HIGH 级漏洞时在 Burp 主窗口播放粒子动画（按严重度分级）
+- **统计面板**：累计发现数、漏洞类型分布、token 消耗趋势
+- **彩蛋**：Konami 码（↑↑↓↓←→←→BA）一键解锁全部未获得成就
+
+> 图鉴/成就/统计持久化在 `~/.api-sentinel/`，跨重启保留。纯激励向，不影响检测能力。
 
 ---
 
@@ -835,7 +1091,47 @@ A: 设环境变量 `API_SENTINEL_HOME=/path/to/dir`。
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — 事件驱动 Loop、工具管道、Subagent、Session Log
 - [Code Audit Skill](https://github.com/auto-coder/code-audit) — 双轨审计、覆盖率矩阵、防幻觉规则、攻击链构建
 
-本项目基于 **Burp Suite Montoya API** 构建，MCP Server 使用 JDK 内置 `com.sun.net.httpserver` 实现（零额外依赖）。
+本项目基于 **Burp Suite Montoya API** 构建，MCP Server 使用 JDK `ServerSocket` 实现（零额外传输依赖）。
+
+---
+
+## 独立运行（CLI 模式）
+
+API Sentinel 支持脱离 Burp Suite 独立运行，适合安全工具集成或批量扫描场景：
+
+```bash
+java -jar API-Sentinel-<version>.jar \
+  --target http://localhost:8089 \
+  --path /api/users/search?name=x \
+  --method GET \
+  --endpoint http://your-llm:8080 \
+  --api-key sk-xxx \
+  --model deepseek-chat \
+  --monitor-only \
+  --output report.json
+```
+
+CLI 模式使用 `HeadlessMontoyaApi` 替代 Burp API，HTTP 请求通过 `java.net.http.HttpClient` 发送，所有 50+ 工具和分析管线均正常运行。
+
+| 参数 | 说明 |
+|------|------|
+| `--target URL` | 目标应用地址 |
+| `--path PATH` | 要分析的 API 路径 |
+| `--endpoint URL` | LLM API 地址 |
+| `--api-key KEY` | LLM API Key |
+| `--model MODEL` | 模型名（如 deepseek-chat） |
+| `--repo PATH` | 源码仓库路径（白盒分析） |
+| `--monitor-only` | 只监控 token 消耗，不拦截 |
+| `--output FILE` | 报告输出路径 |
+
+## 预算管理
+
+支持两种预算模式：
+
+- **ENFORCE**（默认）— 日预算超限时拦截 LLM 调用，返回 RATE_LIMITED
+- **MONITOR_ONLY** — 只记录消耗，不拦截。适用于内部模型无限额度场景
+
+在 AI 设置面板中切换，或通过 `AppConfig.budgetMode` 配置。单端点消耗通过 `AnalysisCostTracker` 追踪，报告末尾输出 token 明细。
 
 ---
 

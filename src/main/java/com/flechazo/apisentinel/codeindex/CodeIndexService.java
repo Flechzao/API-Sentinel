@@ -1,6 +1,7 @@
 package com.flechazo.apisentinel.codeindex;
 
 import com.flechazo.apisentinel.codeindex.parser.*;
+import com.flechazo.apisentinel.config.AppPaths;
 import com.flechazo.apisentinel.config.CodeRepo;
 import com.flechazo.apisentinel.logging.LeveledLogger;
 import com.google.gson.Gson;
@@ -25,6 +26,9 @@ public class CodeIndexService {
 
     private final List<RouteParser> parsers;
     private final Map<String, List<IndexedRoute>> index = new ConcurrentHashMap<>();
+    /** Last repos passed to indexAll — used by grep fallback when no explicit
+     *  repo list is provided. */
+    private volatile List<CodeRepo> lastRepos = List.of();
     private final LeveledLogger logger;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private volatile SinkMap sinkMap;
@@ -59,6 +63,10 @@ public class CodeIndexService {
         }
         try {
             removeRepoIndex(repo.getName());
+            // P0-12: clear any prior failure marker up-front, so a fresh
+            // success run doesn't leave behind the ghost of a previous
+            // error.
+            repo.setIndexError(null);
             int count = doIndex(Path.of(repo.getPath()), repo.getName());
             repo.setIndexed(true);
             repo.setRouteCount(count);
@@ -66,6 +74,19 @@ public class CodeIndexService {
                 this.sinkMap = SinkMap.scan(List.of(repo), logger);
             }
             return count;
+        } catch (Exception e) {
+            // P0-12 hardening: the pre-P0-12 code had no catch at all —
+            // the exception propagated to the caller but the repo was
+            // left with indexed==false and no error message, so the UI
+            // showed "not indexed yet" for a repo that had in fact just
+            // failed. Record the failure explicitly so the user can tell
+            // "hasn't been tried" apart from "tried and couldn't".
+            repo.setIndexed(false);
+            repo.setRouteCount(0);
+            String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            repo.setIndexError(msg);
+            logger.warn("[CodeIndexService] 索引 %s 失败: %s", repo.getName(), msg);
+            throw e;
         } finally {
             indexing.set(false);
         }
@@ -76,6 +97,7 @@ public class CodeIndexService {
             logger.warn("索引正在进行中，跳过");
             return;
         }
+        this.lastRepos = repos != null ? List.copyOf(repos) : List.of();
         try {
             index.clear();
             for (CodeRepo repo : repos) {
@@ -96,20 +118,6 @@ public class CodeIndexService {
     public void removeRepoIndex(String repoName) {
         index.values().forEach(list -> list.removeIf(ir -> ir.repoName().equals(repoName)));
         index.entrySet().removeIf(e -> e.getValue().isEmpty());
-    }
-
-    @Deprecated
-    public void indexRepository(Path repoPath, List<String> excludePatterns) {
-        if (!indexing.compareAndSet(false, true)) {
-            logger.warn("索引正在进行中，跳过");
-            return;
-        }
-        try {
-            index.clear();
-            doIndex(repoPath, repoPath.getFileName() != null ? repoPath.getFileName().toString() : "default");
-        } finally {
-            indexing.set(false);
-        }
     }
 
     private int doIndex(Path repoPath, String repoName) {
@@ -140,7 +148,7 @@ public class CodeIndexService {
                                     count[0]++;
                                 }
                             } catch (IOException e) {
-                                logger.debug("读取文件失败: %s", file);
+                                logger.warn("读取文件失败: %s", file);
                             }
                             break;
                         }
@@ -192,8 +200,13 @@ public class CodeIndexService {
         if (!fuzzy.isEmpty()) return fuzzy;
 
         String lastSegment = lastMeaningfulSegment(searchSegments);
-        if (lastSegment == null) return List.of();
-        return findByLastSegment(lastSegment, null);
+        if (lastSegment != null) {
+            List<RouteEntry> found = findByLastSegment(lastSegment, null);
+            if (!found.isEmpty()) return found;
+        }
+
+        // RPC gateway fallback: grep source code for the identifier
+        return grepForIdentifier(normalized, null);
     }
 
     public List<RouteEntry> findByPathAndDomain(String apiPath, String domain, List<CodeRepo> repos) {
@@ -204,7 +217,21 @@ public class CodeIndexService {
                 .map(CodeRepo::getName)
                 .collect(Collectors.toSet());
 
-        if (matchingRepoNames.isEmpty()) return findByPath(apiPath);
+        // Domain doesn't match any repo — don't just fall back to
+        // findByPath (which uses lastRepos from indexing). Instead,
+        // grep ALL configured repos directly — the user may have
+        // configured a repo without a domain mapping, and the code
+        // is still searchable by identifier.
+        if (matchingRepoNames.isEmpty()) {
+            if (logger != null) {
+                logger.debug("[CodeIndex] 域名 %s 未匹配仓库域名映射，搜索全部 %d 个配置仓库",
+                        domain, repos.size());
+            }
+            String normalized = RouteEntry.normalize(apiPath);
+            List<RouteEntry> routeResult = findByPath(apiPath);
+            if (!routeResult.isEmpty()) return routeResult;
+            return grepForIdentifier(normalized, repos);
+        }
 
         String normalized = RouteEntry.normalize(apiPath);
 
@@ -243,8 +270,17 @@ public class CodeIndexService {
         if (!fuzzy.isEmpty()) return fuzzy;
 
         String lastSegment = lastMeaningfulSegment(searchSegments);
-        if (lastSegment == null) return List.of();
-        return findByLastSegment(lastSegment, matchingRepoNames);
+        if (lastSegment != null) {
+            List<RouteEntry> found = findByLastSegment(lastSegment, matchingRepoNames);
+            if (!found.isEmpty()) return found;
+        }
+
+        // RPC gateway fallback: if the API path is a single identifier
+        // (no '/' separators, e.g. "ListByocResourceGroups"), grep source code
+        // for it as a method/class/handler name.
+        return grepForIdentifier(normalized, matchingRepoNames.isEmpty() ? repos :
+                repos.stream().filter(r -> matchingRepoNames.contains(r.getName()))
+                        .collect(Collectors.toList()));
     }
 
     private String lastMeaningfulSegment(String[] segments) {
@@ -267,6 +303,77 @@ public class CodeIndexService {
                 .map(IndexedRoute::route)
                 .limit(10)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * RPC gateway fallback: when route-based search finds nothing, grep source
+     * code for the API name as a method/class/handler identifier. This handles
+     * RPC-style APIs where the action name (e.g. "ListByocResourceGroups") is
+     * a Java method name, Python function, or JS handler rather than a URL path.
+     *
+     * <p>Searches for word-boundary matches of the identifier in Java/Python/
+     * JS/TS/Vue source files. Returns at most 5 matches wrapped as RouteEntry
+     * so the downstream pipeline treats them the same as route-based results.
+     */
+    private List<RouteEntry> grepForIdentifier(String identifier, List<CodeRepo> repos) {
+        if (identifier == null || identifier.isEmpty() || identifier.length() < 4) {
+            return List.of();
+        }
+        // Strip leading/trailing slashes — the API path may be normalized
+        // to "/listByocResourceSpecs" but the source code has the identifier
+        // as a bare method name "listByocResourceSpecs" without slashes.
+        String cleanId = identifier;
+        while (cleanId.startsWith("/")) cleanId = cleanId.substring(1);
+        while (cleanId.endsWith("/")) cleanId = cleanId.substring(0, cleanId.length() - 1);
+        if (cleanId.isEmpty() || cleanId.length() < 4) return List.of();
+        // Effectively final copy for lambda use
+        final String searchId = cleanId;
+
+        List<CodeRepo> searchRepos = repos != null && !repos.isEmpty()
+                ? repos : lastRepos;
+        if (searchRepos == null || searchRepos.isEmpty()) {
+            if (logger != null) {
+                logger.debug("[CodeIndex] grep 回退跳过: '%s' — 未配置或未索引代码仓库", searchId);
+            }
+            return List.of();
+        }
+
+        try {
+            if (logger != null) {
+                logger.debug("[CodeIndex] grep 回退: 搜索 '%s' 在 %d 个仓库", searchId, searchRepos.size());
+            }
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                    "\\b" + java.util.regex.Pattern.quote(searchId) + "\\b",
+                    java.util.regex.Pattern.CASE_INSENSITIVE);
+            List<RepoGrepper.GrepMatch> matches = RepoGrepper.search(
+                    searchRepos, pattern, "*.{java,py,js,ts,vue,go,kt}", 5, 3);
+
+            if (logger != null) {
+                logger.debug("[CodeIndex] grep 回退: '%s' 找到 %d 个匹配", searchId, matches.size());
+            }
+            return matches.stream()
+                    .map(m -> new RouteEntry(
+                            "GREP",
+                            searchId,
+                            searchId.toLowerCase(),
+                            m.file(),
+                            m.line(),
+                            m.line(),
+                            searchId,
+                            m.file().getFileName().toString().replaceFirst("\\.[^.]+$", "")
+                    ))
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            if (logger != null) {
+                logger.debug("[CodeIndex] grep fallback failed for '%s': %s",
+                        identifier, e.getMessage());
+            }
+            return List.of();
+        }
+    }
+
+    private List<CodeRepo> getRepos() {
+        return lastRepos;
     }
 
     public Map<String, List<RouteEntry>> getAllRoutes() {
@@ -373,7 +480,10 @@ public class CodeIndexService {
             }
             PersistedIndex pi = new PersistedIndex(1, sigs, routeMap);
             Files.createDirectories(INDEX_FILE.getParent());
-            Files.writeString(INDEX_FILE, gson.toJson(pi));
+            // P1-5: the code index isn't itself secret but lives in the
+            // config directory alongside data.json; writing with 600
+            // perms keeps the directory's permission story uniform.
+            AppPaths.writePrivate(INDEX_FILE, gson.toJson(pi));
             logger.info("代码索引已持久化: %d 条路由", getRouteCount());
         } catch (Exception e) {
             logger.error("保存代码索引失败: %s", e.getMessage());

@@ -48,6 +48,13 @@ public final class ThemedDialogs {
         show(parent, title, message, Type.ERROR, new String[]{"确定"});
     }
 
+    /** Called on extension unload to release the BurpTheme reference —
+     *  without this the static field pins the old ClassLoader in memory,
+     *  preventing Burp from reclaiming the extension's heap. */
+    public static void reset() {
+        theme = null;
+    }
+
     private enum Type { INFO, WARN, ERROR }
 
     /** @return index of the clicked button (ESC / window-close → index 0,

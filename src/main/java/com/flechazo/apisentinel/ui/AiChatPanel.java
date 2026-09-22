@@ -51,7 +51,7 @@ public class AiChatPanel extends JPanel {
             });
     private volatile String currentApiPath = null;
     private volatile ApiEntry currentEntry = null;
-    private boolean inStepMode = false;
+    private volatile boolean inStepMode = false;
 
     private static final java.nio.file.Path CHAT_FILE = com.flechazo.apisentinel.config.AppPaths.chatHistoryFile();
     private final java.util.concurrent.atomic.AtomicBoolean chatDirty = new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -87,9 +87,9 @@ public class AiChatPanel extends JPanel {
         statusDot = new JLabel("●");
         statusDot.setFont(theme.displayFont(Font.BOLD, 11f));
         statusDot.setForeground(theme.statusOk());
-        statusDot.setToolTipText("空闲");
+        statusDot.setToolTipText(I18n.get("chat_idle"));
 
-        contextLabel = new JLabel("未选择接口");
+        contextLabel = new JLabel(I18n.get("chat_no_api_selected"));
         contextLabel.setFont(theme.displayFont(Font.BOLD, 12.5f));
         contextLabel.setForeground(theme.headerFg());
 
@@ -99,21 +99,21 @@ public class AiChatPanel extends JPanel {
         modelLabel.setVisible(false);
 
         // Toggle to switch between the conversation view and the step (tool-call) view.
-        viewToggleBtn = headerChip(new JButton("步骤视图"));
-        viewToggleBtn.setToolTipText("在「对话」与「步骤(工具调用)」视图之间切换");
+        viewToggleBtn = headerChip(new JButton(I18n.get("chat_step_view")));
+        viewToggleBtn.setToolTipText(I18n.get("chat_view_toggle_tooltip"));
         viewToggleBtn.addActionListener(e -> {
             if (inStepMode) switchToChatMode(); else switchToStepMode(false);
         });
 
         // Stop: visible only while at least one full analysis is running.
-        stopButton = headerChip(new JButton("⏹ 停止分析"));
-        stopButton.setToolTipText("中断正在运行的 Pipeline/Agent 分析（已收集的部分结果会保留）");
+        stopButton = headerChip(new JButton(I18n.get("chat_stop")));
+        stopButton.setToolTipText(I18n.get("chat_stop_tooltip"));
         stopButton.setVisible(false);
         stopButton.addActionListener(e -> {
             if (onCancelAnalysis != null) {
                 stopButton.setEnabled(false);
-                stopButton.setText("⏹ 正在停止...");
-                addSystemPanel("⏹ 已请求中断分析，等待当前步骤结束...");
+                stopButton.setText(I18n.get("chat_stopping"));
+                addSystemPanel(I18n.get("chat_stop_requested"));
                 onCancelAnalysis.run();
             }
         });
@@ -123,8 +123,8 @@ public class AiChatPanel extends JPanel {
         // ("search", "fid}", "detail") — indistinguishable from action buttons
         // and frequently unreadable. The menu builds itself on click, so it is
         // always current without refresh bookkeeping.
-        historyMenuButton = headerChip(new JButton("历史会话 ▾"));
-        historyMenuButton.setToolTipText("切换最近使用过的对话");
+        historyMenuButton = headerChip(new JButton(I18n.get("chat_history")));
+        historyMenuButton.setToolTipText(I18n.get("chat_history_tooltip"));
         historyMenuButton.addActionListener(e -> showHistoryMenu());
 
         JPanel headerBar = new JPanel(new BorderLayout(8, 0));
@@ -224,7 +224,7 @@ public class AiChatPanel extends JPanel {
         inputArea.setBackground(theme.inputBg());
         inputArea.setForeground(theme.inputFg());
         inputArea.setCaretColor(theme.inputFg());
-        inputArea.setToolTipText("输入消息，Enter 发送，Shift+Enter 换行");
+        inputArea.setToolTipText(I18n.get("chat_input_tooltip"));
 
         javax.swing.event.DocumentListener rowsListener = new javax.swing.event.DocumentListener() {
             @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { updateInputRows(); }
@@ -243,14 +243,14 @@ public class AiChatPanel extends JPanel {
         inputScroll.setBorder(BorderFactory.createLineBorder(theme.inputBorder(), BurpTheme.RADIUS_SM, true));
         inputScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER);
 
-        sendButton = new JButton("发送");
+        sendButton = new JButton(I18n.get("chat_send"));
         sendButton.setFont(theme.displayFont(Font.BOLD, 12f));
         sendButton.setFocusPainted(false);
         // No fixed preferred size: 64x34 clipped the "发送" label under Burp's
         // button insets/font on several themes. Margin + LAF preferred sizing
         // adapts; the wrapper below stretches it to the input's full height.
         sendButton.setMargin(new Insets(4, 18, 4, 18));
-        sendButton.setToolTipText("发送 (Enter)");
+        sendButton.setToolTipText(I18n.get("chat_send_tooltip"));
 
         JPanel sendWrapper = new JPanel(new BorderLayout());
         sendWrapper.setOpaque(false);
@@ -271,6 +271,24 @@ public class AiChatPanel extends JPanel {
 
         // Wire actions
         sendButton.addActionListener(e -> sendCurrentInput());
+
+        // Refresh all I18n-driven labels when language is toggled
+        I18n.addLangListener(lang -> {
+            sendButton.setText(I18n.get("chat_send"));
+            sendButton.setToolTipText(I18n.get("chat_send_tooltip"));
+            stopButton.setText(I18n.get("chat_stop"));
+            stopButton.setToolTipText(I18n.get("chat_stop_tooltip"));
+            historyMenuButton.setText(I18n.get("chat_history"));
+            historyMenuButton.setToolTipText(I18n.get("chat_history_tooltip"));
+            viewToggleBtn.setText(I18n.get("chat_step_view"));
+            viewToggleBtn.setToolTipText(I18n.get("chat_view_toggle_tooltip"));
+            inputArea.setToolTipText(I18n.get("chat_input_tooltip"));
+            boolean isRunning = stopButton.isVisible();
+            statusDot.setToolTipText(isRunning ? I18n.get("chat_running") : I18n.get("chat_idle"));
+            if (currentEntry == null) {
+                contextLabel.setText(I18n.get("chat_no_api_selected"));
+            }
+        });
     }
 
     private JPanel buildEmptyState() {
@@ -286,20 +304,20 @@ public class AiChatPanel extends JPanel {
         col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
         col.setOpaque(false);
 
-        JLabel title = new JLabel("开始对话");
+        JLabel title = new JLabel(I18n.get("chat_start"));
         title.setFont(theme.displayFont(Font.BOLD, 16f));
         title.setForeground(theme.headingColor());
         title.setAlignmentX(0.5f);
         col.add(title);
         col.add(Box.createVerticalStrut(8));
 
-        JLabel hint1 = new JLabel("① 在左侧接口表格选中一行，即可携带完整流量上下文提问");
+        JLabel hint1 = new JLabel(I18n.get("chat_hint1"));
         hint1.setFont(theme.displayFont(Font.PLAIN, 12f));
         hint1.setForeground(theme.systemColor());
         hint1.setAlignmentX(0.5f);
         col.add(hint1);
 
-        JLabel hint2 = new JLabel("② 或直接使用快捷指令 / 输入任意安全分析问题");
+        JLabel hint2 = new JLabel(I18n.get("chat_hint2"));
         hint2.setFont(theme.displayFont(Font.PLAIN, 12f));
         hint2.setForeground(theme.systemColor());
         hint2.setAlignmentX(0.5f);
@@ -310,9 +328,9 @@ public class AiChatPanel extends JPanel {
         chipsRow.setOpaque(false);
         chipsRow.setAlignmentX(0.5f);
         for (String[] p : new String[][]{
-                {"分析安全风险", "分析这个接口的安全风险"},
-                {"漏洞利用", "如何利用这个漏洞"},
-                {"绕过方案", "生成绕过方案"}}) {
+                {"Analyze Security Risk", "Analyze the security risk of this API"},
+                {"Vulnerability Exploit", "How to exploit this vulnerability"},
+                {"Bypass Strategy", "Generate bypass strategy"}}) {
             chipsRow.add(makeChipButton(p[0], () -> sendPrompt(p[1])));
         }
         col.add(chipsRow);
@@ -349,7 +367,7 @@ public class AiChatPanel extends JPanel {
     public void setBusy(boolean busy) {
         SwingUtilities.invokeLater(() -> {
             sendButton.setEnabled(!busy);
-            sendButton.setText(busy ? "…" : "发送");
+            sendButton.setText(busy ? "…" : I18n.get("chat_send"));
         });
     }
 
@@ -393,8 +411,8 @@ public class AiChatPanel extends JPanel {
             boolean show = modelName != null && !modelName.isBlank();
             modelLabel.setVisible(show);
             if (show) {
-                modelLabel.setText("模型: " + modelName);
-                modelLabel.setToolTipText("当前 AI Provider 使用的模型");
+                modelLabel.setText(String.format(I18n.get("ai_model_label"), modelName));
+                modelLabel.setToolTipText(I18n.get("ai_current_model_tip"));
             }
         });
     }
@@ -438,6 +456,9 @@ public class AiChatPanel extends JPanel {
         // A previous analysis may have left the panel in step view; sending a chat
         // message means the user wants the conversation, so reveal it (otherwise
         // they'd type into a hidden chat and think messaging was broken).
+        // switchToChatMode() runs synchronously on the EDT (which we're on),
+        // so the clear+render completes before addUserMessage appends the new
+        // message — no invokeLater timing gap.
         if (inStepMode) switchToChatMode();
         addUserMessage(text);
         if (onSendMessage != null) onSendMessage.accept(text, currentApiPath);
@@ -467,11 +488,11 @@ public class AiChatPanel extends JPanel {
             stopButton.setVisible(running);
             if (!running) {
                 stopButton.setEnabled(true);
-                stopButton.setText("⏹ 停止分析");
+                stopButton.setText(I18n.get("chat_stop"));
             }
             // Header status dot doubles as the run indicator.
             statusDot.setForeground(running ? theme.statusPending() : theme.statusOk());
-            statusDot.setToolTipText(running ? "分析运行中" : "空闲");
+            statusDot.setToolTipText(running ? I18n.get("chat_running") : I18n.get("chat_idle"));
             revalidate();
             repaint();
         });
@@ -508,7 +529,7 @@ public class AiChatPanel extends JPanel {
         if (entry == null) {
             currentApiPath = null;
             currentEntry = null;
-            contextLabel.setText("未选择接口");
+            contextLabel.setText(I18n.get("chat_no_api_selected"));
             contextLabel.setToolTipText(null);
             return;
         }
@@ -524,7 +545,7 @@ public class AiChatPanel extends JPanel {
         setBusy(false);
 
         clearChatArea();
-        addSystemPanel("已切换到 " + entry.getHttpMethod() + " " + entry.getApiPath() + " 上下文");
+        addSystemPanel(I18n.get("chat_switched_to") + " " + entry.getHttpMethod() + " " + entry.getApiPath() + I18n.get("chat_context_suffix"));
         renderHistoryFor(newPath);
         if (chatContainer.getComponentCount() == 0) showEmptyState();
     }
@@ -537,7 +558,7 @@ public class AiChatPanel extends JPanel {
         currentApiPath = key;
         currentEntry = null;
         contextLabel.setText(sessionDisplayName(key));
-        contextLabel.setToolTipText("__global__".equals(key) ? "全局会话" : key);
+        contextLabel.setToolTipText("__global__".equals(key) ? I18n.get("chat_global_session") : key);
         setBusy(false);
 
         // After an analysis the panel sits in STEP mode; switching a
@@ -546,7 +567,7 @@ public class AiChatPanel extends JPanel {
         switchToChatMode();
 
         clearChatArea();
-        addSystemPanel("已切换到会话: " + sessionDisplayName(key));
+        addSystemPanel(I18n.get("chat_switched_session") + " " + sessionDisplayName(key));
         renderHistoryFor(key);
         if (chatContainer.getComponentCount() == 0) showEmptyState();
     }
@@ -581,7 +602,7 @@ public class AiChatPanel extends JPanel {
     private void showHistoryMenu() {
         JPopupMenu menu = new JPopupMenu();
         if (!"__global__".equals(currentApiPath)) {
-            menu.add(historyMenuItem("__global__", "全局会话（通用提问 / 级联通知）"));
+            menu.add(historyMenuItem("__global__", I18n.get("chat_global_session_full")));
         }
         List<String> keys;
         synchronized (conversationHistory) {
@@ -597,7 +618,7 @@ public class AiChatPanel extends JPanel {
             added++;
         }
         if (menu.getComponentCount() == 0) {
-            JMenuItem empty = new JMenuItem("（暂无历史会话）");
+            JMenuItem empty = new JMenuItem(I18n.get("chat_no_history"));
             empty.setEnabled(false);
             menu.add(empty);
         }
@@ -612,7 +633,7 @@ public class AiChatPanel extends JPanel {
     }
 
     private static String sessionDisplayName(String key) {
-        if ("__global__".equals(key)) return "全局会话";
+        if ("__global__".equals(key)) return I18n.get("chat_global_session");
         return key.length() > 30 ? "…" + key.substring(key.length() - 29) : key;
     }
 
@@ -628,7 +649,9 @@ public class AiChatPanel extends JPanel {
 
     public void showThinking() {
         setBusy(true);
-        SwingUtilities.invokeLater(() -> addSystemPanel("思考中..."));
+        // Animated self-drawn spinner note; its Timer is stopped by the
+        // per-message "anim-timer" cleanup when the run ends.
+        SwingUtilities.invokeLater(() -> addPanelSmart(ChatMessagePanel.thinkingMessage(theme)));
     }
 
     public void appendProgressNote(String text) {
@@ -689,7 +712,7 @@ public class AiChatPanel extends JPanel {
         chatDirty.set(true);
         if (key.equals(currentApiPath)) {
             clearChatArea();
-            addSystemPanel("已清除历史对话，开始新的分析...");
+            addSystemPanel(I18n.get("chat_cleared"));
             if (chatContainer.getComponentCount() == 0) showEmptyState();
         }
     }
@@ -820,7 +843,7 @@ public class AiChatPanel extends JPanel {
     }
 
     private void showNewMsgIndicator() {
-        newMsgIndicator.setText("↓ 有新消息，点击回到底部");
+        newMsgIndicator.setText(I18n.get("chat_new_messages"));
     }
 
     private void hideNewMsgIndicator() {
@@ -938,16 +961,30 @@ public class AiChatPanel extends JPanel {
             inStepMode = true;
             if (clearSteps) stepProgressPanel.clear();
             contentLayout.show(contentCards, "steps");
-            viewToggleBtn.setText("对话视图");
+            viewToggleBtn.setText(I18n.get("chat_chat_view"));
         });
     }
 
     public void switchToChatMode() {
-        SwingUtilities.invokeLater(() -> {
+        Runnable action = () -> {
+            boolean wasInStepMode = inStepMode;
             inStepMode = false;
             contentLayout.show(contentCards, "chat");
-            viewToggleBtn.setText("步骤视图");
-        });
+            viewToggleBtn.setText(I18n.get("chat_step_view"));
+            // When switching from step view (e.g. after analysis) to chat view,
+            // re-render the conversation history so the user sees previous
+            // analysis messages and their follow-up questions in context.
+            if (wasInStepMode && currentApiPath != null) {
+                clearChatArea();
+                renderHistoryFor(currentApiPath);
+                if (chatContainer.getComponentCount() == 0) showEmptyState();
+            }
+        };
+        if (SwingUtilities.isEventDispatchThread()) {
+            action.run();
+        } else {
+            SwingUtilities.invokeLater(action);
+        }
     }
 
     public boolean isInStepMode() { return inStepMode; }

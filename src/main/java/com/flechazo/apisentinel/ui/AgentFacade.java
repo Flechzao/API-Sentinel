@@ -2,7 +2,7 @@ package com.flechazo.apisentinel.ui;
 
 import burp.api.montoya.MontoyaApi;
 import com.flechazo.apisentinel.ai.agent.AgentLoop;
-import com.flechazo.apisentinel.ai.pipeline.PipelineConfig;
+import com.flechazo.apisentinel.ai.pipeline.AnalysisConfig;
 import com.flechazo.apisentinel.ai.pipeline.PipelineResult;
 import com.flechazo.apisentinel.ai.provider.LlmProvider;
 import com.flechazo.apisentinel.ai.queue.AnalysisTaskQueue;
@@ -17,11 +17,10 @@ import javax.swing.SwingUtilities;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Agent (ReAct tool-calling loop) execution. Depends one-directionally on
- * PipelineFacade to reuse its completion handling — Agent mode produces the
- * same PipelineResult shape as Pipeline mode and should get identical
- * persistence/reporting/alerting, so there's no reason to duplicate
- * handlePipelineComplete/buildPipelineSummaryForChat here.
+ * Agent (ReAct tool-calling loop) execution. Uses {@link AnalysisCompletionHandler}
+ * for shared completion handling (persistence, reporting, alerting) — the same
+ * handler Pipeline mode uses, so both engines get identical completion treatment
+ * without depending on each other.
  */
 class AgentFacade {
 
@@ -30,7 +29,7 @@ class AgentFacade {
     private final CodeIndexService codeIndexService;
     private final AnalysisTaskQueue analysisQueue;
     private final LeveledLogger logger;
-    private final PipelineFacade pipelineFacade;
+    private final AnalysisCompletionHandler completionHandler;
     private final OobService oobService;
     private final java.util.Set<AgentLoop> activeLoops = ConcurrentHashMap.newKeySet();
     /** UI bridge for ask_user / sandbox-confirm cards in the chat flow. */
@@ -39,16 +38,23 @@ class AgentFacade {
 
     private ApiSentinelTab view;
     private com.flechazo.apisentinel.ai.patterns.PatternStore patternStore;
+    /** F-1: Browser service for client-side security testing (null if disabled). */
+    private com.flechazo.apisentinel.browser.BrowserService browserService;
+    /** F-1: API repository for registering browser-discovered APIs. */
+    private com.flechazo.apisentinel.repository.ApiRepository repository;
+    /** Fast/cheap model name for plan generation + hypothesis generation. */
+    private String fastModel;
 
     AgentFacade(MontoyaApi api, ConfigManager configManager, CodeIndexService codeIndexService,
-                AnalysisTaskQueue analysisQueue, LeveledLogger logger, PipelineFacade pipelineFacade,
+                AnalysisTaskQueue analysisQueue, LeveledLogger logger,
+                AnalysisCompletionHandler completionHandler,
                 OobService oobService) {
         this.api = api;
         this.configManager = configManager;
         this.codeIndexService = codeIndexService;
         this.analysisQueue = analysisQueue;
         this.logger = logger;
-        this.pipelineFacade = pipelineFacade;
+        this.completionHandler = completionHandler;
         this.oobService = oobService;
     }
 
@@ -71,6 +77,27 @@ class AgentFacade {
 
     void setPatternStore(com.flechazo.apisentinel.ai.patterns.PatternStore store) {
         this.patternStore = store;
+    }
+
+    /** F-1: Set browser service for client-side security testing. */
+    void setBrowserService(com.flechazo.apisentinel.browser.BrowserService browserService) {
+        this.browserService = browserService;
+    }
+
+    /** F-1: Set API repository for registering browser-discovered APIs. */
+    void setRepository(com.flechazo.apisentinel.repository.ApiRepository repository) {
+        this.repository = repository;
+    }
+
+    /** Shared login-profile manager (also used by MCP) — enables browser_login. */
+    private com.flechazo.apisentinel.config.LoginProfileManager loginProfileManager;
+    void setLoginProfileManager(com.flechazo.apisentinel.config.LoginProfileManager m) {
+        this.loginProfileManager = m;
+    }
+
+    /** Set the fast/cheap model name for plan generation + hypothesis generation. */
+    void setFastModel(String model) {
+        this.fastModel = model;
     }
 
     void shutdown() {
@@ -97,25 +124,104 @@ class AgentFacade {
         activeLoops.clear();
     }
 
+    /**
+     * Multi-endpoint joint analysis: one Agent loop analyzes all entries together.
+     */
+    void executeAgentForEntries(java.util.List<ApiEntry> entries, LlmProvider provider, Runnable onDone) {
+        if (entries == null || entries.isEmpty()) {
+            if (onDone != null) onDone.run();
+            return;
+        }
+        // Mark all entries as analyzing
+        if (tableModel != null) {
+            for (ApiEntry e : entries) {
+                tableModel.markAnalyzing(e.getApiPath());
+            }
+        }
+        // Store the multi-entries list for AgentLoop to use in multi-entry prompt
+        this.pendingMultiEntries = entries;
+        // Delegate to single-entry execution with the primary entry.
+        // Wrap onDone to also clear analyzing state for non-primary entries
+        // that the Agent didn't explicitly submit reports for.
+        ApiEntry primary = entries.get(0);
+        Runnable wrappedOnDone = () -> {
+            // Clear "analyzing" for all non-primary entries — the Agent
+            // only updated the primary via onAgentComplete. Others may
+            // or may not have received a submit_report; either way they
+            // shouldn't be stuck in "analyzing" forever.
+            if (tableModel != null) {
+                for (int i = 1; i < entries.size(); i++) {
+                    String path = entries.get(i).getApiPath();
+                    // Only clear if still in analyzing state (not already
+                    // completed by a submit_report callback)
+                    if (tableModel.isAnalyzing(path)) {
+                        tableModel.clearAnalyzing(path);
+                    }
+                }
+            }
+            if (onDone != null) onDone.run();
+        };
+        executeAgentForEntry(primary, provider, wrappedOnDone);
+    }
+
+    /** Pending multi-entries list — set before calling executeAgentForEntry,
+     *  consumed by the method to configure AgentLoop.setMultiEntries(). */
+    private java.util.List<ApiEntry> pendingMultiEntries = java.util.List.of();
+
     /** @param onDone called exactly once, on either completion or error — see
-     *                PipelineFacade.executePipelineForEntry's javadoc. */
+     *                PipelineFacade.executePipelineForEntry's javadoc (same contract). */
     void executeAgentForEntry(ApiEntry entry, LlmProvider provider, Runnable onDone) {
         var appConfig = configManager.getConfig();
         boolean authTestEnabled = appConfig.isUnauthorizedDetectionEnabled();
-        PipelineConfig pipelineConfig = new PipelineConfig(true, 10, true, authTestEnabled,
-                appConfig.getAuthSessionACookie(), appConfig.getAuthSessionALabel(),
-                appConfig.getAuthSessionBCookie(), appConfig.getAuthSessionBLabel(),
-                appConfig.getContextWindowTokens(), true,
-                appConfig.isWafDetectionEnabled(), appConfig.isWafRetryEnabled(),
-                appConfig.isActiveProbeEnabled(), appConfig.isBlindVerificationEnabled(),
-                appConfig.getMaxBlindProbeRequests(),
-                appConfig.isBusinessLogicVerificationEnabled(),
-                appConfig.isAiAuthArbitrationEnabled())
-                .withAuditHighRiskOnly(appConfig.isAuditHighRiskOnly())
-                .withCodeExecutionAutoApprove(appConfig.isCodeExecutionAutoApprove());
+        AnalysisConfig pipelineConfig = AnalysisConfig.forPipeline(appConfig, authTestEnabled);
 
         AgentLoop agentLoop = new AgentLoop(provider, api, codeIndexService, pipelineConfig,
                 appConfig.getCodeRepos(), logger, oobService, patternStore, interactionBridge);
+        // Pass fast model name for Plan-then-Execute + Hypothesis Generator.
+        // Try the field first (set at init), then fall back to the settings panel
+        // (in case the user updated it after AgentFacade was created).
+        String effectiveFastModel = fastModel;
+        if ((effectiveFastModel == null || effectiveFastModel.isBlank())
+                && view != null && view.getAiSettingsPanel() != null) {
+            effectiveFastModel = view.getAiSettingsPanel().getFastModel();
+        }
+        if (effectiveFastModel != null && !effectiveFastModel.isBlank()) {
+            agentLoop.setFastModel(effectiveFastModel);
+            logger.info("[Agent] Fast model '%s' 已启用 → Plan-then-Execute + 假设树激活",
+                    effectiveFastModel);
+        }
+        // Pass disabled tools from config
+        if (configManager.getConfig().getDisabledTools() != null
+                && !configManager.getConfig().getDisabledTools().isEmpty()) {
+            agentLoop.setDisabledTools(configManager.getConfig().getDisabledTools());
+        }
+        // Pass cascade hunting setting
+        agentLoop.setCascadeEnabled(appConfig.isCascadeHuntEnabled());
+        // F-1: Inject browser service and repository if enabled
+        if (browserService != null) {
+            agentLoop.setBrowserService(browserService);
+        }
+        if (repository != null) {
+            agentLoop.setApiRepository(repository);
+        }
+        // Enable browser_login in the internal loop (shared profiles with MCP).
+        agentLoop.setAppConfig(appConfig);
+        if (loginProfileManager != null) {
+            agentLoop.setLoginProfileManager(loginProfileManager);
+        }
+        // P1-6: propagate the raw-credentials opt-in from appConfig.
+        agentLoop.setIncludeRawCredentials(
+                configManager.getConfig().isIncludeRawCredentialsInLlm());
+        // Reuse-window soft fold: same config as the pipeline — injects the
+        // prior verdict into the initial user message so the agent
+        // confirms/corrects rather than re-derives from scratch.
+        agentLoop.setReuseWindowMinutes(appConfig.getAnalysisReuseWindowMinutes());
+        // Multi-endpoint mode: if pendingMultiEntries is set, pass it to the
+        // loop so it uses multi-entry prompt and sets allEntries on ToolContext.
+        if (!pendingMultiEntries.isEmpty()) {
+            agentLoop.setMultiEntries(pendingMultiEntries);
+            pendingMultiEntries = java.util.List.of(); // consume
+        }
         activeLoops.add(agentLoop);
 
         AiAnalysisPanel panel = view != null ? view.getAiAnalysisPanel() : null;
@@ -156,7 +262,16 @@ class AgentFacade {
         }
 
         final int[] currentIter = {0};
+        // Track last tool call args for unified card display in onToolResult
+        final String[] lastToolName = {""};
+        final String[] lastToolArgs = {""};
         final boolean[] firstTestCaseBatch = {true};
+        // Agent mode rarely generates test cases (testCases is usually empty),
+        // so onTestCasesGenerated — which auto-switches to the Repeater — never
+        // fires. Without this, send_request results update the Repeater live
+        // but the user stays on the 分析结果 tab and never sees them appear
+        // in real time. Switch on the first payload result instead.
+        final boolean[] firstPayloadResult = {true};
         // Guards: callbackFired — a lifecycle callback ran (so its cleanup
         // already happened); doneFired — onDone must run exactly once across
         // callbacks and the future's safety net.
@@ -172,7 +287,7 @@ class AgentFacade {
                 agentLoop.execute(entry, new AgentLoop.AgentCallback() {
             @Override
             public void onAgentThinking(String thought) {
-                logger.info("[Agent] 思考: %s", thought.length() > 100 ? thought.substring(0, 100) + "..." : thought);
+                logger.debug("[Agent] 思考: %s", thought.length() > 100 ? thought.substring(0, 100) + "..." : thought);
                 if (chatPanel != null) {
                     chatPanel.addAiMessageForPath(entryPath, "🧠 **Agent 思考：**\n\n" + thought);
                     chatPanel.addStep("Thinking", StepProgressPanel.StepType.THINKING, "");
@@ -185,12 +300,14 @@ class AgentFacade {
 
             @Override
             public void onToolCall(String toolName, String args) {
-                logger.info("[Agent] 调用工具: %s", toolName);
+                logger.debug("[Agent] 调用工具: %s", toolName);
+                lastToolName[0] = toolName;
+                lastToolArgs[0] = args;
                 boolean isLlmCall = "analyze_traffic".equals(toolName) || "generate_payloads".equals(toolName);
                 if (chatPanel != null) {
                     String displayArgs = args.length() > 200 ? args.substring(0, 200) + "..." : args;
-                    chatPanel.appendProgressNoteForPath(entryPath,
-                            "🔧 调用工具: " + toolName + (displayArgs.equals("{}") ? "" : " | 参数: " + displayArgs));
+                    // Only add step card (not chat message) — the unified card
+                    // will be shown in onToolResult when we have the result.
                     chatPanel.addStep(toolName, StepProgressPanel.StepType.TOOL_CALL, displayArgs);
                 }
                 if (panel != null) {
@@ -201,10 +318,22 @@ class AgentFacade {
 
             @Override
             public void onToolResult(String toolName, String result) {
-                logger.info("[Agent] 工具 %s 返回 %d 字符", toolName, result.length());
+                logger.debug("[Agent] 工具 %s 返回 %d 字符", toolName, result.length());
                 if (chatPanel != null) {
-                    String display = result.length() > 500 ? result.substring(0, 500) + "\n...[截断]" : result;
-                    chatPanel.addAiMessageForPath(entryPath, "📋 **工具结果 [" + toolName + "]:**\n\n```json\n" + display + "\n```");
+                    // Unified tool card: combines call + result in one message
+                    String displayArgs = lastToolArgs[0].length() > 300
+                            ? lastToolArgs[0].substring(0, 300) + "..." : lastToolArgs[0];
+                    String display = result.length() > 2000
+                            ? result.substring(0, 2000) + "\n...[截断，共 " + result.length() + " 字符]"
+                            : result;
+                    // Build a unified card message
+                    StringBuilder card = new StringBuilder();
+                    card.append("🔧 **").append(toolName).append("**\n");
+                    if (!displayArgs.equals("{}") && !displayArgs.isEmpty()) {
+                        card.append("- 参数: `").append(displayArgs).append("`\n");
+                    }
+                    card.append("- 结果:\n```json\n").append(display).append("\n```");
+                    chatPanel.addAiMessageForPath(entryPath, card.toString());
                     // Complete the step card opened in onToolCall with a fuller detail.
                     String stepDetail = result.length() > 2000 ? result.substring(0, 2000) + "\n...[截断]" : result;
                     // Lead send_request cards with an "HTTP <code> (<ms>)" metadata line so
@@ -247,6 +376,13 @@ class AgentFacade {
             public void onPayloadResultReady(com.flechazo.apisentinel.ai.pipeline.PayloadResult result, int resultIndex) {
                 if (view != null) {
                     view.getRepeaterPanel().showLivePayloadResult(entryPath, result, resultIndex);
+                    // Auto-reveal the Repeater on the first send_request result
+                    // so the user actually sees the live test list grow (Agent
+                    // mode has no test-case batch to trigger switchToRepeater).
+                    if (firstPayloadResult[0]) {
+                        firstPayloadResult[0] = false;
+                        SwingUtilities.invokeLater(view::switchToRepeater);
+                    }
                 }
             }
 
@@ -299,7 +435,7 @@ class AgentFacade {
 
                 if (chatPanel != null) {
                     String risk = result.verdict() != null ? result.verdict().overallRisk() : "UNKNOWN";
-                    String summary = pipelineFacade.buildSummaryForChat(entry, result, "Agent");
+                    String summary = completionHandler.buildSummaryForChat(entry, result, "Agent");
                     if (userCancelled) {
                         chatPanel.appendProgressNoteForPath(entryPath,
                                 "⛔ 已中断（迭代 " + currentIter[0] + "）— 部分结果已保留，最终风险: " + risk);
@@ -311,7 +447,7 @@ class AgentFacade {
                     chatPanel.showFinalResponse(summary);
                 }
 
-                pipelineFacade.handlePipelineComplete(entry, result, panel, "AGENT");
+                completionHandler.handleComplete(entry, result, panel, "AGENT");
                 // Push timeline verdict event
                 if (panel != null && result.verdict() != null) {
                     var v = result.verdict();
@@ -327,6 +463,13 @@ class AgentFacade {
             @Override
             public void onAgentError(String error) {
                 callbackFired.set(true);
+                // Persist the failure into the queue record — without this, a
+                // right-click "Agent analyze" whose loop dies mid-run leaves
+                // its TaskRecord stuck IN_PROGRESS forever (the symmetric
+                // onAgentComplete already calls markCompleted). The table
+                // model refuses removeRecord(IN_PROGRESS), so the only other
+                // way out was extension restart.
+                taskRecord.markFailed(error);
                 agentLoop.shutdown();
                 activeLoops.remove(agentLoop);
                 if (chatPanel != null) chatPanel.setAnalysisActive(false);
@@ -372,6 +515,9 @@ class AgentFacade {
             try {
                 if (!callbackFired.get()) {
                     // No lifecycle callback ran — do the error-path cleanup here.
+                    // This is the mirror of onAgentError: persist failure into the
+                    // queue record so the task doesn't sit IN_PROGRESS forever.
+                    taskRecord.markFailed("循环异常终止");
                     agentLoop.shutdown();
                     activeLoops.remove(agentLoop);
                     if (chatPanel != null) chatPanel.setAnalysisActive(false);
@@ -385,7 +531,6 @@ class AgentFacade {
                         chatPanel.appendProgressNoteForPath(entryPath,
                                 "⚠️ Agent 异常终止，已重置分析状态");
                     }
-                    taskRecord.markFailed("循环异常终止");
                 }
             } catch (Throwable ignored) {}
             safeDone.run();

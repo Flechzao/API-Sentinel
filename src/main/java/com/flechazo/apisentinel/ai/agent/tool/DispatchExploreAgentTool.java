@@ -69,7 +69,8 @@ public class DispatchExploreAgentTool implements AgentTool {
                 ctx.oobService());
         AgentToolRegistry subRegistry = StandardToolRegistry.buildExploration(subCtx);
 
-        ExplorationSubAgent.Result result = ExplorationSubAgent.run(ctx.provider(), subRegistry, task, ctx.logger());
+        ExplorationSubAgent.Result result = ExplorationSubAgent.run(
+                ctx.provider(), subRegistry, task, ctx.logger(), ctx.cheapModelOverride());
 
         JsonObject out = new JsonObject();
         out.addProperty("success", result.success());

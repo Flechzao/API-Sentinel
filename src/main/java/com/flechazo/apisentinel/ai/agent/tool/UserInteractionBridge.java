@@ -36,4 +36,14 @@ public interface UserInteractionBridge {
      */
     Integer askChoice(String question, String context, List<String> options,
                       long timeoutSeconds);
+
+    /**
+     * Returns the free-text answer typed by the user when askChoice returned
+     * -2 (the sentinel for "custom text input"). Default implementation
+     * returns null (no custom answer available). UI implementations override
+     * this to expose the typed text.
+     */
+    default String getLastCustomAnswer() {
+        return null;
+    }
 }

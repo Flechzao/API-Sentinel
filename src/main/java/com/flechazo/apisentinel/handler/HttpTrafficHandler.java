@@ -17,9 +17,10 @@ import com.flechazo.apisentinel.model.ApiEntry;
 import com.flechazo.apisentinel.model.ApiStatus;
 import com.flechazo.apisentinel.model.PassiveFinding;
 import com.flechazo.apisentinel.repository.ApiRepository;
-import com.flechazo.apisentinel.ui.UiEventBus;
+import com.flechazo.apisentinel.event.UiEventBus;
 import com.flechazo.apisentinel.util.UrlUtils;
 import com.flechazo.apisentinel.util.FocusFilter;
+import com.flechazo.apisentinel.util.HttpMessageUtils;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -105,8 +106,36 @@ public class HttpTrafficHandler implements HttpHandler {
     @Override
     public ResponseReceivedAction handleHttpResponseReceived(HttpResponseReceived response) {
         try {
+            // OPTIONS preflight filter (ported from Bambda++): rewrite CORS
+            // preflight OPTIONS proxy responses to text/css + a marker body so
+            // Burp's proxy history hides them (default MIME filter drops CSS).
+            // Done HERE (in HttpHandler, not ProxyResponseHandler) because
+            // api.proxy().registerResponseHandler() is not called in some Burp
+            // versions, while api.http().registerHttpHandler() always works.
+            try {
+                if (configManager.getConfig().isFilterOptionsPreflightEnabled()) {
+                    burp.api.montoya.core.ToolSource ts = response.toolSource();
+                    if (ts != null && ts.isFromTool(burp.api.montoya.core.ToolType.PROXY)) {
+                        String m = response.initiatingRequest() != null
+                                ? response.initiatingRequest().method() : "";
+                        if ("OPTIONS".equalsIgnoreCase(m)) {
+                            return continueWith(response
+                                    .withRemovedHeader("Content-Type")
+                                    .withAddedHeader("Content-Type", "text/css; charset=UTF-8")
+                                    .withBody("/* Injected by API-Sentinel: Filter OPTIONS preflight */"));
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            // P1-2 fix: Skip requests sent by API-Sentinel's own probe tools
+            if (HttpMessageUtils.isProbeRequest(response.initiatingRequest())) {
+                return continueWith(response);
+            }
+
             String url = response.initiatingRequest().url();
             String urlPath = UrlUtils.extractPath(url);
+            String queryString = UrlUtils.extractQueryString(url);
 
             if (UrlUtils.isStaticResource(urlPath)) {
                 return continueWith(response);
@@ -121,12 +150,24 @@ public class HttpTrafficHandler implements HttpHandler {
                 return continueWith(response);
             }
 
+            // Skip browser/CDN/analytics noise domains (firefox telemetry,
+            // google analytics, baidu tracking, etc.) — they flood the API
+            // table with non-business entries.
+            String noiseHost = null;
+            try { noiseHost = response.initiatingRequest().httpService().host(); } catch (Exception ignored) {}
+            if (noiseHost != null && FocusFilter.isExcludedDomain(noiseHost, configManager.getConfig().getFocusExcludeDomains())) {
+                return continueWith(response);
+            }
+
 
 
             String requestBody = response.initiatingRequest().bodyToString();
 
-            List<ApiEntry> matches = matchEngine.match(urlPath, requestBody);
-
+            List<ApiEntry> matches = matchEngine.match(urlPath, queryString, requestBody);
+            matchDebug("urlPath=" + urlPath + " qsLen=" + (queryString==null?0:queryString.length())
+                    + " matches=" + matches.size()
+                    + (matches.isEmpty() ? "" : " first=" + matches.get(0).getApiPath()
+                            + " method=" + matches.get(0).getHttpMethod()));
             if (!matches.isEmpty()) {
                 ApiEntry patternEntry = matches.get(0);
                 logger.debug("匹配到API: %s %s -> %s", method, urlPath, patternEntry.getApiPath());
@@ -137,9 +178,31 @@ public class HttpTrafficHandler implements HttpHandler {
                 String rawResponse = buildRawResponse(response);
                 int statusCode = response.statusCode();
 
-                // Find or create a method-specific entry
+                // Find or create a method-specific entry.
+                // When the imported entry has an empty method (user imported
+                // just "listByocResourceSpecs" without "POST"), update it
+                // in-place with the real method instead of creating a
+                // duplicate entry.
                 ApiEntry matched;
-                if (!repository.contains(method, patternEntry.getApiPath())) {
+                if (patternEntry.getHttpMethod() == null || patternEntry.getHttpMethod().isEmpty()) {
+                    // Update the existing entry's method — avoids creating
+                    // a duplicate when traffic reveals the real method. MUST
+                    // go through repository.updateMethod (not setHttpMethod)
+                    // so the method+path index is re-keyed; otherwise the next
+                    // request for the same action sees contains(method,path)
+                    // ==false and creates a duplicate (RPC-gateway bare-name
+                    // entries hit this because they're imported without a method).
+                    matched = patternEntry;
+                    repository.updateMethod(patternEntry.getApiPath(), method);
+                } else if (patternEntry.hasMethod(method)) {
+                    // The matched entry already covers this method (its method
+                    // field is e.g. "POST" or "POST/GET" from a prior history
+                    // scan's appendHttpMethod). Reuse it instead of creating a
+                    // duplicate. Checked against the entry field directly
+                    // because appendHttpMethod doesn't re-index pathIndex, so
+                    // contains(method,path) would falsely return false.
+                    matched = patternEntry;
+                } else if (!repository.contains(method, patternEntry.getApiPath())) {
                     ApiEntry newEntry = new ApiEntry(method, patternEntry.getApiPath());
                     newEntry.setDomain(host);
                     repository.add(newEntry);
@@ -221,9 +284,21 @@ public class HttpTrafficHandler implements HttpHandler {
             StringWriter sw = new StringWriter();
             e.printStackTrace(new PrintWriter(sw));
             logger.error("处理HTTP响应时异常: %s\n%s", e.getMessage(), sw.toString());
+            matchDebug("EXC: " + e + " | " + e.getMessage());
         }
 
         return continueWith(response);
+    }
+
+    /** File-based diagnostic for the traffic-match path — Burp's console isn't
+     *  readable from here, so this writes one line per response to
+     *  ~/.api-sentinel/match-debug.log so match failures can be diagnosed. */
+    private static void matchDebug(String msg) {
+        try {
+            java.nio.file.Path p = com.flechazo.apisentinel.config.AppPaths.configFile().getParent().resolve("match-debug.log");
+            java.nio.file.Files.writeString(p, java.time.LocalDateTime.now() + "  " + msg + System.lineSeparator(),
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        } catch (Exception ignored) {}
     }
 
     /**
@@ -296,7 +371,7 @@ public class HttpTrafficHandler implements HttpHandler {
                 }
             }
         } catch (Exception heuristicEx) {
-            logger.debug("启发式检测异常: %s", heuristicEx.getMessage());
+            logger.warn("启发式检测异常: %s", heuristicEx.getMessage());
         }
 
         // Deferred highlight upgrade: heuristic findings outrank the base
@@ -308,7 +383,7 @@ public class HttpTrafficHandler implements HttpHandler {
             } catch (Exception annEx) {
                 // Annotation handle going stale must never kill the scan —
                 // the findings are already stored on the entry.
-                logger.debug("异步更新高亮标注失败: %s", annEx.getMessage());
+                logger.warn("异步更新高亮标注失败: %s", annEx.getMessage());
             }
         }
 

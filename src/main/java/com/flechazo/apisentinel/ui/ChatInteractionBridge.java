@@ -30,6 +30,14 @@ import java.util.function.Supplier;
  */
 class ChatInteractionBridge implements UserInteractionBridge {
 
+    /** Stores the user's free-text answer when askChoice returns -2. */
+    private volatile String lastCustomAnswer;
+
+    @Override
+    public String getLastCustomAnswer() {
+        return lastCustomAnswer;
+    }
+
     private final Supplier<AiChatPanel> chatPanelSupplier;
 
     ChatInteractionBridge(Supplier<AiChatPanel> chatPanelSupplier) {
@@ -166,6 +174,33 @@ class ChatInteractionBridge implements UserInteractionBridge {
                 });
                 buttons.add(opt);
             }
+
+            // Free-text input for custom answers not covered by the options
+            JTextField customInput = new JTextField(24);
+            customInput.setFont(theme.displayFont(Font.PLAIN, 12f));
+            JButton customBtn = flatButton(theme, "提交自定义答案");
+            customBtn.addActionListener(e -> {
+                String text = customInput.getText().trim();
+                if (text.isEmpty()) {
+                    status.setText("⚠ 请输入内容后再提交");
+                    return;
+                }
+                lastCustomAnswer = text;
+                answer.set(-2);
+                status.setText("✅ 已提交自定义答案");
+                disableAll(buttons);
+                customInput.setEnabled(false);
+                customBtn.setEnabled(false);
+                latch.countDown();
+            });
+            // Enter key submits
+            customInput.addActionListener(e -> customBtn.doClick());
+
+            JPanel customRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+            customRow.setOpaque(false);
+            customRow.add(customInput);
+            customRow.add(customBtn);
+
             JButton skip = flatButton(theme, "跳过（让 Agent 自主决策）");
             skip.addActionListener(e -> {
                 answer.set(-1);
@@ -183,6 +218,9 @@ class ChatInteractionBridge implements UserInteractionBridge {
             south.add(buttons, BorderLayout.SOUTH);
             card.add(south, BorderLayout.SOUTH);
 
+            // Insert the custom text row between body and south
+            card.add(customRow, BorderLayout.EAST);
+
             panel.addInteractionCard(card);
             panel.toast("Agent 有问题要问你（见对话面板）", false);
         });
@@ -194,7 +232,8 @@ class ChatInteractionBridge implements UserInteractionBridge {
             Thread.currentThread().interrupt();
             answered = latch.getCount() == 0;
         }
-        if (answered && answer.get() >= 0) {
+        if (answered && answer.get() != -1) {
+            // Returns the option index (>=0) or -2 for custom free-text answer.
             return answer.get();
         }
         if (!answered) {

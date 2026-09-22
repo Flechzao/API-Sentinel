@@ -9,24 +9,48 @@ API-Sentinel 在开发过程中借鉴了开源项目 **claude-bug-bounty (BugHun
 
 ## 借鉴清单
 
-| 借鉴时间 | 本项目文件 | 来源 | 内容 |
-|---|---|---|---|
-| v1.0（此前） | `src/main/resources/payloads/payload-library.md` | `skills/security-arsenal/SKILL.md` | SQLi/XSS/SSRF/NoSQL/路径穿越/命令注入/SSTI/IDOR/JWT/XXE 的 payload 参考蒸馏 |
-| v1.0（此前） | `src/main/java/.../ai/prompt/SafetyRules.java` | `skills/triage-validation/SKILL.md` | NEVER-SUBMIT 清单、kill signals、链式升级（CONDITIONALLY VALID）表 |
-| 2026-08 | `src/main/java/.../detection/WafDetector.java` | `tools/waf_response_analyzer.py` | 12 家 WAF 厂商签名（body/header 正则）、拦截页关键词、加权评分与阈值思路 |
-| 2026-08 | `src/main/java/.../detection/WafEncoder.java` | `tools/waf_encoder.py` | payload 编码变体生成（URL 多层编码、SQL 注释拆分、大小写混合、运算符替换、Base64 包装等） |
-| 2026-08 | `src/main/resources/payloads/payload-library.md`（新增章节） | `skills/web2-vuln-classes/SKILL.md`、`skills/security-arsenal/SKILL.md` | 竞态条件、OAuth/OIDC、文件上传、GraphQL、WebSocket、请求走私等章节的 payload 蒸馏 |
-| 2026-08 | `src/main/java/.../detection/ActiveProbeExecutor.java` | `tools/cors_scanner.py`、`tools/jwt_scanner.py`、`tools/crlf_scanner.py`、`tools/nosqli_scanner.py` | 主动探针判定逻辑：CORS 精确反射分级、JWT alg:none 伪造、CRLF canary 检出、NoSQL 差分/时序阈值 |
-| 2026-08 | `payload-library.md`（精简重构）、`payloads/bypass-strategies.md`、`payloads/business-logic.md` | `skills/security-arsenal/SKILL.md`（WAF Bypass Reference）、`skills/web2-vuln-classes/SKILL.md`（Blind SQLi/Business Logic/Race） | 盲注 DB 函数表与指纹、绕过策略决策框架、业务逻辑触发条件 |
-| 2026-08 | `src/main/java/.../detection/WafBypassEncoder.java`、`BooleanBlindVerifier.java`、`TimingBlindVerifier.java`、`BusinessLogicVerifier.java` | `tools/waf_encoder.py`（编码复用）、上述 skills 的判定方法 | 绕过策略链、布尔/时序盲注判定阈值（长度差 >5%、延迟 ≥90%）、业务逻辑 6 类测试判定标准 |
-| 2026-08 | `src/main/java/.../ai/pipeline/VerdictValidator.java`（身份审计） | `validate.py` 的 Identity Check 思想 | 越权类 confirmed 身份证据强制（三问缺失自动降级 identity_not_proven），结构化 rejection_reasons |
-| 2026-08 | `src/main/resources/rules/sensitive.yml`、`src/main/java/.../config/SensitiveRule.java`、`detection/SensitiveInfoDetector.java` | gh0stkey/HaE（规则正则与三层格式思想） | 敏感信息规则 13→27 条（Shiro/ViewState/passwd/win.ini/内网IP/MAC/Windows路径/Druid/Vite/SourceMap 等），主正则+排除过滤+作用域三层格式 |
-| 2026-08 | `src/main/java/.../auth/AuthTestExecutor.java`（灰色区间 AI 仲裁） | sule01u/AutorizePro（Apache 2.0，越权响应语义判定思路） | Jaccard 相似度灰色区间（0.60-0.85）调 LLM 对基线/交换凭证响应对做 VULNERABLE/SAFE/UNKNOWN 裁决；prompt 为我们的自写改写版 |
-| 2026-08 | `src/main/java/.../intruder/AiPayloadGenerator.java` 等（Intruder AI 载荷生成） | by-ai（MIT，Intruder AI 载荷生成思路） | Intruder Extension-generated 载荷生成器；改进了 AttackConfiguration 上下文利用（by-ai 收到但未使用），将完整请求模板+插入点上下文注入 prompt |
-| 2026-08 | `src/main/resources/payloads/variant-matrix.md`、`.../ai/prompt/TestGenPrompt.java`（按需注入） | `SKILL.md` 的 IDOR Variants (10 Ways)、SSRF Impact Chain、Open Redirect Bypass Table | IDOR V1-V10 攻击面变体维度表、IDOR/SSRF 影响链定级、开放重定向 11 种绕过变体；命中对应漏洞类时注入 | 
-| 2026-08 | `src/main/resources/payloads/chain-hunting.md`、`.../ai/agent/AgentLoop.java`（system prompt 注入） | `SKILL.md` 的 A->B Bug Signal Method (Cluster Hunting)、`agents/chain-builder.md` | 集群狩猎策略：A→B 链表、Cluster Hunt 六步法（确认 A→找兄弟→测兄弟→串链→量化→按链报告）、节奏纪律 |
-| 2026-08 | `.../ai/agent/GoalState.java`、`.../ai/agent/AgentController.java`（级联狩猎） | CCB（claude-code 社区复刻）的 BLOCKED_CONSECUTIVE_THRESHOLD 连续阻塞熔断思想 | Controller 级联防失控：连续 N 轮无新发现熔断 + 会话预算封顶（Java 重写，无代码拷贝） |
-| 2026-08 | `.../ai/patterns/PatternStore.java`（成功模式记忆） | `SKILL.md` 的 "reuse what worked" 纪律 | 已验证确认打法持久化为 (vulnType, technique, payload, endpoint, domain) 记忆，新分析注入历史成功模式 |
+| 本项目文件 | 来源 | 内容 |
+|---|---|---|
+| `src/main/resources/payloads/payload-library.md` | `skills/security-arsenal/SKILL.md` | SQLi/XSS/SSRF/NoSQL/路径穿越/命令注入/SSTI/IDOR/JWT/XXE 的 payload 参考蒸馏 |
+| `src/main/java/.../ai/prompt/SafetyRules.java` | `skills/triage-validation/SKILL.md` | NEVER-SUBMIT 清单、kill signals、链式升级（CONDITIONALLY VALID）表 |
+| `src/main/java/.../detection/WafDetector.java` | `tools/waf_response_analyzer.py` | 12 家 WAF 厂商签名（body/header 正则）、拦截页关键词、加权评分与阈值思路 |
+| `src/main/java/.../detection/WafEncoder.java` | `tools/waf_encoder.py` | payload 编码变体生成（URL 多层编码、SQL 注释拆分、大小写混合、运算符替换、Base64 包装等） |
+| `src/main/resources/payloads/payload-library.md`（新增章节） | `skills/web2-vuln-classes/SKILL.md`、`skills/security-arsenal/SKILL.md` | 竞态条件、OAuth/OIDC、文件上传、GraphQL、WebSocket、请求走私等章节的 payload 蒸馏 |
+| `src/main/java/.../detection/ActiveProbeExecutor.java` | `tools/cors_scanner.py`、`tools/jwt_scanner.py`、`tools/crlf_scanner.py`、`tools/nosqli_scanner.py` | 主动探针判定逻辑：CORS 精确反射分级、JWT alg:none 伪造、CRLF canary 检出、NoSQL 差分/时序阈值 |
+| `payload-library.md`（精简重构）、`payloads/bypass-strategies.md`、`payloads/business-logic.md` | `skills/security-arsenal/SKILL.md`（WAF Bypass Reference）、`skills/web2-vuln-classes/SKILL.md`（Blind SQLi/Business Logic/Race） | 盲注 DB 函数表与指纹、绕过策略决策框架、业务逻辑触发条件 |
+| `src/main/java/.../detection/WafBypassEncoder.java`、`BooleanBlindVerifier.java`、`TimingBlindVerifier.java`、`BusinessLogicVerifier.java` | `tools/waf_encoder.py`（编码复用）、上述 skills 的判定方法 | 绕过策略链、布尔/时序盲注判定阈值（长度差 >5%、延迟 ≥90%）、业务逻辑 6 类测试判定标准 |
+| `src/main/java/.../ai/pipeline/VerdictValidator.java`（身份审计） | `validate.py` 的 Identity Check 思想 | 越权类 confirmed 身份证据强制（三问缺失自动降级 identity_not_proven），结构化 rejection_reasons |
+| `src/main/resources/rules/sensitive.yml`、`src/main/java/.../config/SensitiveRule.java`、`detection/SensitiveInfoDetector.java` | gh0stkey/HaE（规则正则与三层格式思想） | 敏感信息规则 13→27 条（Shiro/ViewState/passwd/win.ini/内网IP/MAC/Windows路径/Druid/Vite/SourceMap 等），主正则+排除过滤+作用域三层格式 |
+| `src/main/java/.../auth/AuthTestExecutor.java`（灰色区间 AI 仲裁） | sule01u/AutorizePro（Apache 2.0，越权响应语义判定思路） | Jaccard 相似度灰色区间（0.60-0.85）调 LLM 对基线/交换凭证响应对做 VULNERABLE/SAFE/UNKNOWN 裁决；prompt 为我们的自写改写版 |
+| `src/main/java/.../intruder/AiPayloadGenerator.java` 等（Intruder AI 载荷生成） | by-ai（MIT，Intruder AI 载荷生成思路） | Intruder Extension-generated 载荷生成器；改进了 AttackConfiguration 上下文利用（by-ai 收到但未使用），将完整请求模板+插入点上下文注入 prompt |
+| `src/main/resources/payloads/variant-matrix.md`、`.../ai/prompt/TestGenPrompt.java`（按需注入） | `SKILL.md` 的 IDOR Variants (10 Ways)、SSRF Impact Chain、Open Redirect Bypass Table | IDOR V1-V10 攻击面变体维度表、IDOR/SSRF 影响链定级、开放重定向 11 种绕过变体；命中对应漏洞类时注入 |
+| `src/main/resources/payloads/chain-hunting.md`、`.../ai/agent/AgentLoop.java`（system prompt 注入） | `SKILL.md` 的 A->B Bug Signal Method (Cluster Hunting)、`agents/chain-builder.md` | 集群狩猎策略：A→B 链表、Cluster Hunt 六步法（确认 A→找兄弟→测兄弟→串链→量化→按链报告）、节奏纪律 |
+| `.../ai/agent/GoalState.java`、`.../ai/agent/AgentController.java`（级联狩猎） | CCB（claude-code 社区复刻）的 BLOCKED_CONSECUTIVE_THRESHOLD 连续阻塞熔断思想 | Controller 级联防失控：连续 N 轮无新发现熔断 + 会话预算封顶（Java 重写，无代码拷贝） |
+| `.../ai/patterns/PatternStore.java`（成功模式记忆） | `SKILL.md` 的 "reuse what worked" 纪律 | 已验证确认打法持久化为 (vulnType, technique, payload, endpoint, domain) 记忆，新分析注入历史成功模式 |
+| `.../ai/agent/ProgressiveToolDisclosure.java`（渐进式工具暴露） | Anthropic MCP Tool Tax 研究 + OpenAI Swarm Routine 模式 | 阶段感知工具过滤：工具按分析阶段分组（RECON/PAYLOAD/BROWSER/ADVANCED/CHAIN），每轮只暴露相关组，节省 ~68% schema tokens；request_tools 元工具按需加载 |
+| `.../ai/agent/EpisodicReflectionMemory.java`（反思记忆） | Reflexion (NeurIPS 2023, Noah Shinn et al.) | 滑动窗口反思记忆：工具批量失败时 LLM 自生成结构化反思（诊断+修正策略），注入后续 LLM 调用上下文，减少重复错误。参考 Reflexion 的 verbal reinforcement learning 模式 |
+| `.../ai/agent/ErrorCompressor.java`（错误压缩） | IEEE ICNDSA 2026 Smart Cascade | 失败批次诊断压缩：将 ~5000 tokens 的原始失败结果压缩为 ~200 tokens 的结构化诊断（模式分类+参数分析+修正建议），恢复率从 21% 提升至 60% |
+| `.../ai/agent/FindingEvidenceStore.java`（发现存储） | MemGPT/Letta 三层记忆 + CrewAI Entity Memory | 持久化发现存储：自动从工具结果提取发现，Agent 可通过 update_analysis_notes 工具自管理记忆。参考 MemGPT 的 Core/Recall/Archival 三层架构和 CrewAI 的 Entity Memory |
+| `.../ai/agent/PlanThenExecuteAgent.java`（先规划再执行） | LangGraph StateGraph + Anthropic Orchestrator-Workers | Plan-then-Execute 模式：侦察后生成结构化分析计划（步骤+工具+成功标准+备选），Agent 按计划执行而非每轮重新规划。减少 30-40% 的规划型 LLM 调用 |
+| `.../ai/agent/PocValidator.java`（PoC 验证） | Aikido 独立验证 Agent 模式 | 提交前 PoC 验证：对 CONFIRMED 级别的发现进行证据质量检查（具体性/非推测性/含响应特征），不合格的自动降级为 SUSPECTED |
+| `.../ai/agent/AnalysisStateTracker.java`（状态追踪） | 12-Factor Agents (Dex Horthy) Explicit FSM | 结构化分析状态追踪：15 个漏洞类别×状态矩阵，程序化记录已测试/未测试/已确认/已排除，注入 reflection prompts 提供精确覆盖率 |
+| `.../ai/agent/AnalysisProfile.java`（分析 Profile） | Shannon (Keygraph) 白盒攻击路径图思想 | 6 种分析 Profile 自动选择（CRUD/文件/认证/外部/输入/通用），基于 API 路径+方法+请求体特征自动匹配，优先排序漏洞类别 |
+
+## 参考项目
+
+参考了以下开源项目（仅借鉴思路/方法论，未拷贝代码）：
+
+| 改进项 | 参考项目 | 借鉴内容 |
+|--------|----------|----------|
+| IDOR/BOLA 增强 | idor-detector、BOLA-Lens | ID 格式识别、owner 字段模式、置信度评分思路 |
+| PoC 自动生成 | Strix (usestrix/strix) | PoC 自动生成理念（模板化 cURL + Python + 复现步骤） |
+| 多 Agent 协作 | PentAGI | 规划/侦察/执行/验证角色分工与协作链 |
+| 自定义检测模板 | Nuclei (projectdiscovery) | YAML 模板 DSL（matchers: regex/word/status、condition、part、negative） |
+| MCP 安全扫描 | MCP-Scanner (knostic)、mcp-audit | MCP 端点探测、认证缺失检测、风险评估 |
+| 浏览器自动化 | agent-browser (Vercel) | Rust 原生浏览器 CLI 集成思路 |
+| AI 驱动检测 | clairvoyance、pentestgpt、zap-ai-extensions | LLM 驱动漏洞检测的 prompt/推理模式 |
+| Burp 扩展 | burp-ai-assistant、burp-vuln-scanner | Burp 扩展架构与 AI 集成参考 |
+| 标准 | OWASP API Security Top 10 (2023) | 攻击类型分类与 owaspMapping |
 
 ## 内置依赖（随仓库分发）
 

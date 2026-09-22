@@ -28,8 +28,11 @@ public final class ExplorationSubAgent {
     public record Result(boolean success, String summary, int iterationsUsed,
                           List<String> toolsCalled, String error) {}
 
-    private static final int MAX_ITERATIONS = 12;
-    private static final int MAX_TOKENS_PER_TURN = 8192;
+    // P2-3: reduced from 12 to 8 — exploration sub-agent should be a
+    // quick "look around this endpoint" scan, not a full analysis.
+    private static final int MAX_ITERATIONS = 8;
+    // P2-3: reduced from 8192 to 4096 — same rationale as ChainHunterSubAgent.
+    private static final int MAX_TOKENS_PER_TURN = 4096;
     private static final int THINKING_BUDGET_TOKENS = 3000;
     private static final double TEMPERATURE = 0.3;
     /** Smaller than AgentLoop's — this sub-task's scope is narrower. */
@@ -40,6 +43,13 @@ public final class ExplorationSubAgent {
 
     public static Result run(LlmProvider provider, AgentToolRegistry registry,
                               String task, LeveledLogger logger) {
+        return run(provider, registry, task, logger, null);
+    }
+
+    /** @param modelOverride low-cost model for this breadth-exploration loop
+     *  (cost tiering); null = main model. */
+    public static Result run(LlmProvider provider, AgentToolRegistry registry,
+                              String task, LeveledLogger logger, String modelOverride) {
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(buildSystemPrompt(task)));
         messages.add(ChatMessage.user(task));
@@ -50,6 +60,9 @@ public final class ExplorationSubAgent {
         try {
             for (int iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
                 LlmRequest request = new LlmRequest(messages, toolDefs, TEMPERATURE, MAX_TOKENS_PER_TURN);
+                if (modelOverride != null && !modelOverride.isBlank()) {
+                    request = request.withModelOverride(modelOverride);
+                }
                 if (provider.supportsExtendedThinking()) {
                     request = request.withThinking(THINKING_BUDGET_TOKENS);
                 }

@@ -12,7 +12,7 @@ import com.flechazo.apisentinel.model.ApiStatus;
 import com.flechazo.apisentinel.model.PassiveFinding;
 import com.flechazo.apisentinel.model.VulnType;
 import com.flechazo.apisentinel.repository.ApiRepository;
-import com.flechazo.apisentinel.ui.UiEventBus;
+import com.flechazo.apisentinel.event.UiEventBus;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -78,7 +78,7 @@ public class UnauthorizedDetector {
             requestForAsync = HttpRequest.httpRequest(
                     originalRequest.httpService(), originalRequest.toByteArray());
         } catch (Exception copyEx) {
-            logger.debug("未授权检测: 请求拷贝失败，使用原始引用: %s", copyEx.getMessage());
+            logger.warn("未授权检测: 请求拷贝失败，使用原始引用: %s", copyEx.getMessage());
             requestForAsync = originalRequest;
         }
         final HttpRequest detachedRequest = requestForAsync;

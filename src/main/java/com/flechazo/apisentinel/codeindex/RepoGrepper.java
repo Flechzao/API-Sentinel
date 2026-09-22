@@ -26,6 +26,25 @@ public final class RepoGrepper {
 
     public record GrepMatch(Path file, int line, String context) {}
 
+    /** P0-12: richer return type that lets callers tell "no matches
+     *  because nothing fit the pattern" apart from "no matches because
+     *  we couldn't read any of the repos". The pre-P0-12 code returned
+     *  a bare {@code List<GrepMatch>} that was empty in both cases, so
+     *  tools that reported {@code match_count: 0} to the LLM were
+     *  silently claiming "nothing here" when the truth was "we had no
+     *  access". {@code unavailableReason} is null on a healthy run
+     *  (matches or no matches) and non-null only when every configured
+     *  repo was unreadable. */
+    public record GrepOutcome(List<GrepMatch> matches, String unavailableReason) {
+        public boolean isAvailable() { return unavailableReason == null; }
+        static GrepOutcome available(List<GrepMatch> matches) {
+            return new GrepOutcome(matches, null);
+        }
+        static GrepOutcome unavailable(String reason, List<GrepMatch> partial) {
+            return new GrepOutcome(partial == null ? List.of() : partial, reason);
+        }
+    }
+
     private static final Set<String> DEFAULT_EXCLUDES = Set.of(
             "node_modules", ".git", "build", "target", "dist", "__pycache__", ".venv");
 
@@ -57,9 +76,27 @@ public final class RepoGrepper {
     public static List<GrepMatch> search(List<CodeRepo> repos, Pattern pattern,
                                           String pathGlob, int maxResults, int contextLines,
                                           boolean multiline) {
+        return searchEx(repos, pattern, pathGlob, maxResults, contextLines, multiline).matches();
+    }
+
+    /** P0-12: extended form of {@link #search} that distinguishes "empty
+     *  because nothing matched" from "empty because every repo was
+     *  unreadable". Existing callers that only need the list can keep
+     *  using {@code search()}; tool-layer callers (GrepRepoTool,
+     *  McpTools) that surface the result to the LLM should prefer this
+     *  overload so a permissions / mount failure doesn't get reported
+     *  as {@code match_count: 0}. */
+    public static GrepOutcome searchEx(List<CodeRepo> repos, Pattern pattern,
+                                       String pathGlob, int maxResults, int contextLines,
+                                       boolean multiline) {
         List<GrepMatch> results = new ArrayList<>();
-        if (repos == null || pattern == null || maxResults <= 0) return results;
+        if (repos == null || pattern == null || maxResults <= 0) {
+            return GrepOutcome.available(results);
+        }
         PathMatcher matcher = buildPathMatcher(pathGlob);
+
+        boolean anyReadable = false;
+        List<String> failureReasons = new ArrayList<>();
 
         for (CodeRepo repo : repos) {
             if (results.size() >= maxResults) break;
@@ -67,14 +104,26 @@ public final class RepoGrepper {
             try {
                 root = Path.of(repo.getPath());
             } catch (Exception e) {
+                failureReasons.add(repo.getName() + ": invalid path");
                 continue;
             }
-            if (!Files.isDirectory(root)) continue;
+            if (!Files.isDirectory(root)) {
+                failureReasons.add(repo.getName() + ": not a directory");
+                continue;
+            }
 
+            // Track readability per repo: the moment walkFileTree starts
+            // and visits any entry (file OR directory), we consider the
+            // repo readable — even if every individual file inside is
+            // binary or filter-skipped. A repo whose root is readable
+            // but happens to hold zero greppable files legitimately
+            // returns 0 matches and must NOT be reported as unavailable.
+            boolean[] repoReadable = {false};
             try {
                 Files.walkFileTree(root, new SimpleFileVisitor<>() {
                     @Override
                     public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                        repoReadable[0] = true;
                         if (results.size() >= maxResults) return FileVisitResult.TERMINATE;
                         String dirName = dir.getFileName() != null ? dir.getFileName().toString() : "";
                         if (DEFAULT_EXCLUDES.contains(dirName)) return FileVisitResult.SKIP_SUBTREE;
@@ -83,6 +132,7 @@ public final class RepoGrepper {
 
                     @Override
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                        repoReadable[0] = true;
                         if (results.size() >= maxResults) return FileVisitResult.TERMINATE;
                         if (attrs.size() > 2_000_000) return FileVisitResult.CONTINUE;
                         if (matcher != null && !matcher.matches(root.relativize(file))) {
@@ -102,11 +152,19 @@ public final class RepoGrepper {
                         return FileVisitResult.CONTINUE;
                     }
                 });
-            } catch (IOException ignored) {
-                // skip this repo root, continue with others
+            } catch (IOException e) {
+                failureReasons.add(repo.getName() + ": "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                continue;
             }
+            if (repoReadable[0]) anyReadable = true;
         }
-        return results;
+
+        if (!anyReadable) {
+            String reason = "all_repos_unreadable: " + String.join("; ", failureReasons);
+            return GrepOutcome.unavailable(reason, results);
+        }
+        return GrepOutcome.available(results);
     }
 
     /** Builds a glob PathMatcher from a user-supplied pattern, or null for no

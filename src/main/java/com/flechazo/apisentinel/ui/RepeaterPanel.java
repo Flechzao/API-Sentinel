@@ -95,7 +95,7 @@ public class RepeaterPanel extends JPanel {
         responseEditor = api.userInterface().createHttpResponseEditor(EditorOptions.READ_ONLY);
 
         // === TOP: Payload table ===
-        payloadModel = new DefaultTableModel(new String[]{"名称", "类别", "目标参数", "Payload", "验证结果", "响应码", "响应大小"}, 0) {
+        payloadModel = new DefaultTableModel(new String[]{I18n.get("repeater_col_name"), I18n.get("repeater_col_category"), I18n.get("repeater_col_target_param"), "Payload", I18n.get("repeater_col_result"), I18n.get("repeater_col_status_code"), I18n.get("repeater_col_resp_size")}, 0) {
             // Allow editing name/category/target/payload so users can tweak
             // auto-generated cases or add their own; 验证结果/响应码/响应大小 are
             // computed by the verification flow and stay read-only.
@@ -103,7 +103,9 @@ public class RepeaterPanel extends JPanel {
         };
         payloadTable = new JTable(payloadModel);
         payloadTable.setRowHeight(22);
-        payloadTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        // Allow selecting 2 rows for the side-by-side evidence comparison
+        // (e.g. the two sessions of an IDOR). Single-click still loads one row.
+        payloadTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         payloadTable.getColumnModel().getColumn(0).setPreferredWidth(180);
         payloadTable.getColumnModel().getColumn(1).setPreferredWidth(100);
         payloadTable.getColumnModel().getColumn(2).setPreferredWidth(100);
@@ -117,11 +119,11 @@ public class RepeaterPanel extends JPanel {
                 setHorizontalAlignment(CENTER);
                 if (!s && v != null) {
                     String text = v.toString();
-                    if (text.contains("无风险")) setForeground(new Color(120, 120, 120));
-                    else if (text.contains("HIGH") || text.contains("已确认")) setForeground(Color.RED);
+                    if (text.contains(I18n.get("repeater_no_risk_text"))) setForeground(new Color(120, 120, 120));
+                    else if (text.contains("HIGH") || text.contains(I18n.get("repeater_confirmed"))) setForeground(Color.RED);
                     else if (text.contains("MEDIUM")) setForeground(new Color(200, 130, 0));
-                    else if (text.contains("异常")) setForeground(new Color(200, 0, 0));
-                    else if (text.equals("待验证")) setForeground(new Color(150, 150, 150));
+                    else if (text.contains(I18n.get("repeater_anomaly"))) setForeground(new Color(200, 0, 0));
+                    else if (text.equals(I18n.get("repeater_pending"))) setForeground(new Color(150, 150, 150));
                     else setForeground(getForeground());
                 }
                 return this;
@@ -203,14 +205,14 @@ public class RepeaterPanel extends JPanel {
 
         JPanel payloadListPanel = new JPanel(new BorderLayout());
         JPanel payloadListHeader = new JPanel(new BorderLayout());
-        JLabel payloadListTitle = new JLabel(" 测试用例列表");
+        JLabel payloadListTitle = new JLabel(I18n.get("repeater_test_case_list"));
         payloadListTitle.setFont(theme.displayFont(Font.BOLD, 12f));
         payloadListHeader.add(payloadListTitle, BorderLayout.WEST);
-        JButton collapseListBtn = new JButton("▲ 折叠");
+        JButton collapseListBtn = new JButton(I18n.get("repeater_collapse"));
         collapseListBtn.setFont(theme.displayFont(Font.PLAIN, 11f));
         collapseListBtn.setMargin(new Insets(1, 6, 1, 6));
         collapseListBtn.setFocusPainted(false);
-        collapseListBtn.setToolTipText("收起/展开测试用例列表，给 Request/Response 腾出更多空间");
+        collapseListBtn.setToolTipText(I18n.get("repeater_collapse_tooltip"));
         JPanel payloadListHeaderRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
         payloadListHeaderRight.add(collapseListBtn);
         payloadListHeader.add(payloadListHeaderRight, BorderLayout.EAST);
@@ -222,7 +224,7 @@ public class RepeaterPanel extends JPanel {
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 3));
         toolbar.setBorder(BorderFactory.createMatteBorder(1, 0, 1, 0, UIManager.getColor("Separator.foreground")));
 
-        sendButton = new JButton("Send");
+        sendButton = new JButton(I18n.get("repeater_send_btn"));
         sendButton.setFont(theme.displayFont(Font.BOLD, 13f));
         sendButton.setFocusPainted(false);
         sendButton.setPreferredSize(new Dimension(80, 28));
@@ -233,21 +235,27 @@ public class RepeaterPanel extends JPanel {
 
         JButton toBurpRepeater = new JButton("→ Repeater");
         toBurpRepeater.setFont(theme.displayFont(Font.PLAIN, 11f));
-        toBurpRepeater.setToolTipText("发送到 Burp 原生 Repeater");
+        toBurpRepeater.setToolTipText(I18n.get("repeater_to_burp_repeater_tooltip"));
         toBurpRepeater.addActionListener(e -> sendToBurpNativeRepeater());
         toolbar.add(toBurpRepeater);
 
         JButton toComparer = new JButton("⇋ Comparer");
         toComparer.setFont(theme.displayFont(Font.PLAIN, 11f));
-        toComparer.setToolTipText("发送基线 + 当前响应到 Comparer 对比");
+        toComparer.setToolTipText(I18n.get("repeater_to_comparer_tooltip"));
         toComparer.addActionListener(e -> sendToComparer());
         toolbar.add(toComparer);
 
-        JButton addCaseBtn = new JButton("+ 添加测试用例");
+        JButton sideBySideBtn = new JButton(I18n.get("repeater_side_by_side"));
+        sideBySideBtn.setFont(theme.displayFont(Font.PLAIN, 11f));
+        sideBySideBtn.setToolTipText(I18n.get("repeater_side_by_side_tooltip"));
+        sideBySideBtn.addActionListener(e -> openSideBySideCompare());
+        toolbar.add(sideBySideBtn);
+
+        JButton addCaseBtn = new JButton(I18n.get("repeater_add_case"));
         addCaseBtn.setFont(theme.displayFont(Font.PLAIN, 11f));
-        addCaseBtn.setToolTipText("手动添加一个测试用例行（可编辑名称/参数/Payload）");
+        addCaseBtn.setToolTipText(I18n.get("repeater_add_case_tooltip"));
         addCaseBtn.addActionListener(e -> {
-            payloadModel.addRow(new Object[]{"新测试用例", "手动", "", "", "待验证", "", ""});
+            payloadModel.addRow(new Object[]{I18n.get("repeater_new_case"), I18n.get("repeater_manual"), "", "", I18n.get("repeater_pending"), "", ""});
             int r = payloadModel.getRowCount() - 1;
             payloadTable.setRowSelectionInterval(r, r);
         });
@@ -257,7 +265,7 @@ public class RepeaterPanel extends JPanel {
         JButton aiChatBtn = new JButton("AI");
         aiChatBtn.setFont(theme.displayFont(Font.BOLD, 11f));
         aiChatBtn.setFocusPainted(false);
-        aiChatBtn.setToolTipText("打开 AI 对话分析当前请求");
+        aiChatBtn.setToolTipText(I18n.get("repeater_ai_chat_tooltip"));
         aiChatBtn.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         aiChatBtn.addActionListener(e -> { if (onAiChatRequested != null) onAiChatRequested.run(); });
         toolbar.add(aiChatBtn);
@@ -305,10 +313,10 @@ public class RepeaterPanel extends JPanel {
             if (!listCollapsed) {
                 expandedListHeight = payloadSplit.getDividerLocation();
                 payloadSplit.setDividerLocation(COLLAPSED_LIST_HEIGHT);
-                collapseListBtn.setText("▼ 展开");
+                collapseListBtn.setText(I18n.get("repeater_expand"));
             } else {
                 payloadSplit.setDividerLocation(expandedListHeight);
-                collapseListBtn.setText("▲ 折叠");
+                collapseListBtn.setText(I18n.get("repeater_collapse"));
             }
             listCollapsed = !listCollapsed;
         });
@@ -369,16 +377,16 @@ public class RepeaterPanel extends JPanel {
             int caseCount = testCases.size();
             if (resultIndex < caseCount) {
                 doShowPayloadResult(resultIndex, pr.sentRequest(), pr.receivedResponse(),
-                        pr.statusCode(), pr.responseTimeMs(), pr.anomalyDetected(), pr.wafVendor(), pr.wafScore());
+                        pr.statusCode(), pr.responseTimeMs(), pr.showsAsVerified(), pr.wafVendor(), pr.wafScore());
             } else {
                 doAddFollowUpPayloadResult(pr);
             }
-            if (!pr.anomalyDetected()) {
+            if (!pr.showsAsVerified()) {
                 int row = Math.min(resultIndex, payloadModel.getRowCount() - 1);
                 if (row >= 0) {
                     String current = String.valueOf(payloadModel.getValueAt(row, 4));
                     if (current.startsWith("✓")) {
-                        payloadModel.setValueAt("⏳ 待分析", row, 4);
+                        payloadModel.setValueAt(I18n.get("repeater_pending_analysis"), row, 4);
                     }
                 }
             }
@@ -417,7 +425,7 @@ public class RepeaterPanel extends JPanel {
         resetEntryState();
         testCases.addAll(cases);
         for (TestCase tc : cases) {
-            payloadModel.addRow(new Object[]{tc.name(), tc.category(), tc.targetParam(), tc.payload(), "待验证", "", ""});
+            payloadModel.addRow(new Object[]{tc.name(), tc.category(), tc.targetParam(), tc.payload(), I18n.get("repeater_pending"), "", ""});
         }
         if (!cases.isEmpty()) payloadTable.setRowSelectionInterval(0, 0);
 
@@ -503,7 +511,7 @@ public class RepeaterPanel extends JPanel {
             if (idx >= 0 && matched.add(idx)) {
                 var pr = results.get(idx);
                 doShowPayloadResult(row, pr.sentRequest(), pr.receivedResponse(),
-                        pr.statusCode(), pr.responseTimeMs(), pr.anomalyDetected(), pr.wafVendor(), pr.wafScore());
+                        pr.statusCode(), pr.responseTimeMs(), pr.showsAsVerified(), pr.wafVendor(), pr.wafScore());
             }
         }
         for (int i = 0; i < results.size(); i++) {
@@ -750,14 +758,14 @@ public class RepeaterPanel extends JPanel {
             } else if (wafScore >= PayloadResult.WAF_REVIEW) {
                 result = I18n.get("result_waf_review");
             } else if (isServerError) {
-                result = "⚠ 异常 (" + statusCode + ")";
+                result = I18n.get("repeater_anomaly") + " (" + statusCode + ")";
             } else if (isBlocked) {
-                result = "✓ 无风险";
+                result = I18n.get("repeater_no_risk");
             } else if (anomalyDetected) {
                 String originalRisk = index < testCases.size() ? testCases.get(index).riskIfConfirmed() : "MEDIUM";
                 result = "⚡ " + originalRisk;
             } else {
-                result = "✓ 无风险";
+                result = I18n.get("repeater_no_risk");
             }
             payloadModel.setValueAt(result, index, 4);
             payloadModel.setValueAt(statusCode > 0 ? String.valueOf(statusCode) : "", index, 5);
@@ -773,10 +781,10 @@ public class RepeaterPanel extends JPanel {
             } catch (Exception e) {
                 responseEditor.setResponse(HttpResponse.httpResponse("HTTP/1.1 " + statusCode + " OK\r\n\r\n" + receivedResponse));
             }
-            statusLabel.setText(String.format("验证结果 — %d — %dms", statusCode, elapsed));
+            statusLabel.setText(String.format(I18n.get("repeater_verify_result_fmt"), statusCode, elapsed));
             statusLabel.setForeground(statusColor(statusCode));
         } else {
-            statusLabel.setText("无响应");
+            statusLabel.setText(I18n.get("repeater_no_response"));
             statusLabel.setForeground(Color.RED);
         }
     }
@@ -819,7 +827,7 @@ public class RepeaterPanel extends JPanel {
         String targetParam;
         String payload;
         if (!body.isEmpty()) {
-            targetParam = "body";
+            targetParam = deriveTargetParam(body);
             payload = body.length() > 200 ? body.substring(0, 197) + "..." : body;
         } else {
             int qIdx = path.indexOf('?');
@@ -833,8 +841,87 @@ public class RepeaterPanel extends JPanel {
             }
         }
 
-        doAddFollowUpPayloadResult(name, targetParam, payload,
-                pr.sentRequest(), pr.receivedResponse(), pr.statusCode(), pr.responseTimeMs(), pr.anomalyDetected(), pr.wafVendor(), pr.wafScore());
+        // Category from the actual request (probe id / payload signature /
+        // session tag) instead of a blanket "追问测试". Session label appended
+        // when present so two-session (IDOR) rows are distinguishable.
+        String category = deriveCategory(pr);
+
+        doAddFollowUpPayloadResult(name, category, targetParam, payload,
+                pr.sentRequest(), pr.receivedResponse(), pr.statusCode(), pr.responseTimeMs(), pr.showsAsVerified(), pr.wafVendor(), pr.wafScore());
+    }
+
+    /** Infer a human-readable test category from the raw request: first a
+     *  {@code probe-<cat>-NNN} requestId hint, then payload signatures, else
+     *  the generic follow-up label. */
+    private static String deriveCategory(PayloadResult pr) {
+        String req = pr.sentRequest() == null ? "" : pr.sentRequest();
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("probe-([a-zA-Z]+)-?\\w*").matcher(req);
+        if (m.find()) {
+            String cat = mapProbeCategory(m.group(1).toLowerCase(java.util.Locale.ROOT));
+            if (cat != null) return cat + sessionSuffix(pr);
+        }
+        String low = req.toLowerCase(java.util.Locale.ROOT);
+        String sig;
+        if (low.contains("<script") || low.contains("onerror=") || low.contains("javascript:")) sig = "XSS";
+        else if (low.contains("' or ") || low.contains("union select") || low.contains("'='")) sig = I18n.get("repeater_sql_injection");
+        else if (low.contains("\norigin:") || low.contains("\r\norigin:")) sig = "CORS";
+        else if (req.contains("../") || low.contains("..%2f")) sig = I18n.get("repeater_path_traversal");
+        else if (low.contains("${") || low.contains("{{")) sig = I18n.get("repeater_ssti");
+        else if (low.contains("callback=") || low.contains("jsonp")) sig = "JSONP";
+        else sig = I18n.get("repeater_followup");
+        return sig + sessionSuffix(pr);
+    }
+
+    private static String mapProbeCategory(String c) {
+        return switch (c) {
+            case "idor", "bac", "authz", "auth" -> I18n.get("repeater_authz_idor");
+            case "cors" -> "CORS";
+            case "xss" -> "XSS";
+            case "sqli", "sql" -> I18n.get("repeater_sql_injection");
+            case "jsonp" -> "JSONP";
+            case "ssrf" -> "SSRF";
+            case "ssti" -> "SSTI";
+            case "lfi", "traversal", "path" -> I18n.get("repeater_path_traversal");
+            case "detail", "baseline", "base" -> I18n.get("repeater_baseline");
+            default -> null;
+        };
+    }
+
+    /** " · 会话X" suffix when the request is session-tagged, so the two sides
+     *  of a two-session IDOR comparison read distinctly in the 类别 column. */
+    private static String sessionSuffix(PayloadResult pr) {
+        String s = pr.authSession();
+        if (s == null || s.isBlank()) return "";
+        // Shorten "session_ctoken_1ad4jd7kkd" → "…jd7kkd" for a compact tag.
+        String tail = s.length() > 8 ? s.substring(s.length() - 6) : s;
+        return I18n.get("repeater_session_suffix") + tail;
+    }
+
+    /** Extract the meaningful injected field name(s) from a request body,
+     *  skipping envelope/noise keys (requestId/ctoken/timestamp). Falls back to
+     *  "body" when nothing better is found. */
+    private static String deriveTargetParam(String body) {
+        String json = body;
+        int eq = body.indexOf('=');
+        if (body.startsWith("requestBody=") && eq >= 0) json = body.substring(eq + 1);
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("\"(\\w+)\"\\s*:").matcher(json);
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        java.util.Set<String> noise = java.util.Set.of("requestId", "ctoken", "timestamp", "_t", "nonce");
+        while (m.find() && keys.size() < 3) {
+            String k = m.group(1);
+            if (!noise.contains(k) && !keys.contains(k)) keys.add(k);
+        }
+        if (!keys.isEmpty()) return String.join(",", keys);
+        // form-encoded a=b&c=d → first non-noise key
+        if (json.contains("=")) {
+            for (String pair : json.split("&")) {
+                String k = pair.contains("=") ? pair.substring(0, pair.indexOf('=')) : pair;
+                if (!k.isBlank() && !noise.contains(k)) return k;
+            }
+        }
+        return "body";
     }
 
 
@@ -858,6 +945,13 @@ public class RepeaterPanel extends JPanel {
     private void doAddFollowUpPayloadResult(String name, String targetParam, String payload,
             String sentRequest, String receivedResponse, int statusCode, long elapsed, boolean anomalyDetected,
             String wafVendor, int wafScore) {
+        doAddFollowUpPayloadResult(name, I18n.get("repeater_followup"), targetParam, payload, sentRequest,
+                receivedResponse, statusCode, elapsed, anomalyDetected, wafVendor, wafScore);
+    }
+
+    private void doAddFollowUpPayloadResult(String name, String category, String targetParam, String payload,
+            String sentRequest, String receivedResponse, int statusCode, long elapsed, boolean anomalyDetected,
+            String wafVendor, int wafScore) {
         boolean isServerError = statusCode >= 500 || statusCode == 0;
         boolean isBlocked = statusCode == 403 || statusCode == 401 || statusCode == 400;
         String result;
@@ -866,19 +960,19 @@ public class RepeaterPanel extends JPanel {
         } else if (wafScore >= PayloadResult.WAF_REVIEW) {
             result = I18n.get("result_waf_review");
         } else if (isServerError) {
-            result = "⚠ 异常 (" + statusCode + ")";
+            result = I18n.get("repeater_anomaly") + " (" + statusCode + ")";
         } else if (isBlocked) {
-            result = "✓ 无风险";
+            result = I18n.get("repeater_no_risk");
         } else if (anomalyDetected) {
-            result = "⚡ 已确认";
+            result = I18n.get("repeater_confirmed");
         } else {
-            result = "✓ 无风险";
+            result = I18n.get("repeater_no_risk");
         }
 
         int rowIdx = payloadModel.getRowCount();
         addingFollowUp = true;
         try {
-            payloadModel.addRow(new Object[]{name, "追问测试", targetParam, payload, result,
+            payloadModel.addRow(new Object[]{name, category == null ? I18n.get("repeater_followup") : category, targetParam, payload, result,
                     statusCode > 0 ? String.valueOf(statusCode) : "", formatSize(receivedResponse)});
         } finally {
             addingFollowUp = false;
@@ -902,7 +996,7 @@ public class RepeaterPanel extends JPanel {
             } catch (Exception e) {
                 responseEditor.setResponse(HttpResponse.httpResponse("HTTP/1.1 " + statusCode + " OK\r\n\r\n" + receivedResponse));
             }
-            statusLabel.setText(String.format("追问测试 — %d — %dms", statusCode, elapsed));
+            statusLabel.setText(String.format(I18n.get("repeater_followup_fmt"), statusCode, elapsed));
             statusLabel.setForeground(statusColor(statusCode));
         }
     }
@@ -920,15 +1014,15 @@ public class RepeaterPanel extends JPanel {
                 default -> "LOW";
             };
             for (var round : result.rounds()) {
-                String name = "越权: " + round.description();
-                String detail = String.format("HTTP %d (相似度 %.0f%%)", round.statusCode(), round.similarity() * 100);
-                payloadModel.addRow(new Object[]{name, "越权检测", verdict, detail, riskLabel, "", ""});
+                String name = I18n.get("repeater_authz_round_prefix") + round.description();
+                String detail = String.format("HTTP %d (similarity %.0f%%)", round.statusCode(), round.similarity() * 100);
+                payloadModel.addRow(new Object[]{name, I18n.get("repeater_authz_detect"), verdict, detail, riskLabel, "", ""});
             }
             if (authTestRowOffset < payloadModel.getRowCount()) {
                 payloadTable.setRowSelectionInterval(authTestRowOffset, authTestRowOffset);
                 payloadTable.scrollRectToVisible(payloadTable.getCellRect(authTestRowOffset, 0, true));
             }
-            statusLabel.setText(String.format("越���检测 — %s (最大相似度 %.0f%%)",
+            statusLabel.setText(String.format(I18n.get("repeater_authz_fmt"),
                     verdict, result.maxSimilarity() * 100));
             statusLabel.setForeground(result.verdict() == com.flechazo.apisentinel.auth.AuthTestResult.AuthVerdict.VULNERABLE
                     ? new Color(200, 0, 0) : statusColor(200));
@@ -948,12 +1042,12 @@ public class RepeaterPanel extends JPanel {
                 responseEditor.setResponse(HttpResponse.httpResponse(
                         "HTTP/1.1 " + round.statusCode() + " OK\r\n\r\n" + fullResp));
             }
-            statusLabel.setText(String.format("越权检测 — %s — HTTP %d (相似度 %.0f%%)",
+            statusLabel.setText(String.format(I18n.get("repeater_authz_detail_fmt"),
                     round.description(), round.statusCode(), round.similarity() * 100));
             statusLabel.setForeground(round.similarity() >= 0.85 ? new Color(200, 0, 0)
                     : round.similarity() >= 0.60 ? new Color(200, 150, 0) : new Color(0, 120, 60));
         } else {
-            statusLabel.setText("越权检测 — " + round.description() + " (无完整数据)");
+            statusLabel.setText(I18n.get("repeater_authz_detect") + " — " + round.description() + " (incomplete)");
             statusLabel.setForeground(Color.GRAY);
         }
     }
@@ -972,7 +1066,7 @@ public class RepeaterPanel extends JPanel {
                 if (entry.getLastRawResponse() != null && !entry.getLastRawResponse().isEmpty()) {
                     try {
                         responseEditor.setResponse(HttpResponse.httpResponse(entry.getLastRawResponse()));
-                        statusLabel.setText(String.format("已加载 — %d", entry.getLastStatusCode()));
+                        statusLabel.setText(String.format("Loaded — %d", entry.getLastStatusCode()));
                         statusLabel.setForeground(statusColor(entry.getLastStatusCode()));
                     } catch (Exception ignored) {}
                 }
@@ -995,7 +1089,7 @@ public class RepeaterPanel extends JPanel {
      *  on screen, since the old code only ever updated the editor when a
      *  cached response existed and did nothing otherwise. */
     private static final String NO_RESPONSE_PLACEHOLDER =
-            "HTTP/1.1 000 Not Sent\r\n\r\n(该测试用例尚未实际发送，这里没有真实响应——点击上方 Send 按钮发送)";
+            "HTTP/1.1 000 Not Sent\r\n\r\n(This test case has not been sent yet — click Send above)";
 
     private void loadTestCaseIntoRequest(int index, TestCase tc) {
         String cached = sentRequestCache.get(index);
@@ -1090,11 +1184,11 @@ public class RepeaterPanel extends JPanel {
     private void sendRequest() {
         HttpRequest httpRequest;
         try { httpRequest = requestEditor.getRequest(); }
-        catch (Exception e) { statusLabel.setText("无法解析请求"); statusLabel.setForeground(Color.RED); return; }
-        if (httpRequest == null) { statusLabel.setText("请求为空"); statusLabel.setForeground(Color.RED); return; }
+        catch (Exception e) { statusLabel.setText(I18n.get("repeater_cannot_parse")); statusLabel.setForeground(Color.RED); return; }
+        if (httpRequest == null) { statusLabel.setText(I18n.get("repeater_request_empty")); statusLabel.setForeground(Color.RED); return; }
 
         sendButton.setEnabled(false);
-        statusLabel.setText("Sending...");
+        statusLabel.setText(I18n.get("repeater_sending"));
         statusLabel.setForeground(new Color(0xFF, 0x66, 0x00));
 
         // Entry-switch guard: if the user switches to another entry while this
@@ -1131,11 +1225,11 @@ public class RepeaterPanel extends JPanel {
                             boolean isBlocked = code == 403 || code == 401 || code == 400;
                             String verifyResult;
                             if (isServerError) {
-                                verifyResult = "⚠ 异常 (" + code + ")";
+                                verifyResult = I18n.get("repeater_anomaly") + " (" + code + ")";
                             } else if (isBlocked) {
-                                verifyResult = "✓ 无风险";
+                                verifyResult = I18n.get("repeater_no_risk");
                             } else {
-                                verifyResult = "✓ 无风险";
+                                verifyResult = I18n.get("repeater_no_risk");
                             }
                             payloadModel.setValueAt(verifyResult, selectedRow, 4);
                             payloadModel.setValueAt(String.valueOf(code), selectedRow, 5);
@@ -1143,7 +1237,7 @@ public class RepeaterPanel extends JPanel {
                             receivedResponseCache.put(selectedRow, result.response().toString());
                         }
                     } else {
-                        statusLabel.setText("无响应 — 检查主机/端口/协议");
+                        statusLabel.setText(I18n.get("repeater_no_response") + " — check host/port/protocol");
                         statusLabel.setForeground(Color.RED);
                     }
                     sendButton.setEnabled(true);
@@ -1151,7 +1245,7 @@ public class RepeaterPanel extends JPanel {
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> {
                     if (java.util.Objects.equals(sendEntryPath, currentEntryPath)) {
-                        statusLabel.setText("错误: " + ex.getMessage());
+                        statusLabel.setText(I18n.get("repeater_error_prefix") + ex.getMessage());
                         statusLabel.setForeground(Color.RED);
                     }
                     sendButton.setEnabled(true);
@@ -1163,35 +1257,58 @@ public class RepeaterPanel extends JPanel {
     private void sendToBurpNativeRepeater() {
         try {
             HttpRequest request = requestEditor.getRequest();
-            if (request == null) { statusLabel.setText("无请求"); statusLabel.setForeground(Color.RED); return; }
+            if (request == null) { statusLabel.setText(I18n.get("repeater_no_request")); statusLabel.setForeground(Color.RED); return; }
             String rawStr = request.toString();
             String host = parseHostFromRequest(rawStr);
             if (host.isEmpty()) host = !currentHost.isEmpty() ? currentHost : "example.com";
             HttpRequest finalReq = HttpRequest.httpRequest(buildHttpService(host), rawStr);
             String path = "/"; try { path = request.path(); } catch (Exception ignored) {}
             api.repeater().sendToRepeater(finalReq, "Sentinel: " + path);
-            statusLabel.setText("→ 已发送到 Burp Repeater");
+            statusLabel.setText("→ Sent to Burp Repeater");
             statusLabel.setForeground(new Color(0, 120, 180));
         } catch (Exception e) {
-            statusLabel.setText("发送失败: " + e.getMessage());
+            statusLabel.setText(I18n.get("repeater_send_failed_prefix") + e.getMessage());
             statusLabel.setForeground(Color.RED);
         }
+    }
+
+    /** Open the in-plugin side-by-side evidence view for the 2 selected rows
+     *  (e.g. the owner-session vs attacker-session packets of an IDOR). */
+    private void openSideBySideCompare() {
+        int[] rows = payloadTable.getSelectedRows();
+        if (rows.length != 2) {
+            statusLabel.setText(I18n.get("repeater_select_2_rows"));
+            statusLabel.setForeground(statusColor(0));
+            return;
+        }
+        int r1 = rows[0], r2 = rows[1];
+        EvidenceCompareDialog.show(api, this, "Evidence Compare — Before/After",
+                rowCompareLabel(r1), sentRequestCache.get(r1), receivedResponseCache.get(r1),
+                rowCompareLabel(r2), sentRequestCache.get(r2), receivedResponseCache.get(r2));
+    }
+
+    /** "[类别] 名称" label for a compare column, from the table row. */
+    private String rowCompareLabel(int row) {
+        if (row < 0 || row >= payloadModel.getRowCount()) return "Packet";
+        Object cat = payloadModel.getValueAt(row, 1);
+        Object name = payloadModel.getValueAt(row, 0);
+        return "[" + (cat == null ? "" : cat) + "] " + (name == null ? "" : name);
     }
 
     private void sendToComparer() {
         try {
             HttpResponse cur = responseEditor.getResponse();
-            if (cur == null) { statusLabel.setText("当前无响应"); statusLabel.setForeground(Color.RED); return; }
+            if (cur == null) { statusLabel.setText(I18n.get("repeater_no_response")); statusLabel.setForeground(Color.RED); return; }
             if (baselineResponse != null && !baselineResponse.isEmpty()) {
                 api.comparer().sendToComparer(ByteArray.byteArray(baselineResponse), cur.toByteArray());
-                statusLabel.setText("⇋ 已发送 基线+当前 到 Comparer");
+                statusLabel.setText("⇋ Sent baseline+current to Comparer");
             } else {
                 api.comparer().sendToComparer(cur.toByteArray());
-                statusLabel.setText("⇋ 已发送当前响应到 Comparer（无基线）");
+                statusLabel.setText("⇋ Sent current response to Comparer (no baseline)");
             }
             statusLabel.setForeground(new Color(0, 120, 180));
         } catch (Exception e) {
-            statusLabel.setText("Comparer 失败: " + e.getMessage());
+            statusLabel.setText(I18n.get("repeater_comparer_failed_prefix") + e.getMessage());
             statusLabel.setForeground(Color.RED);
         }
     }

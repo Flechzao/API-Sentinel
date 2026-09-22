@@ -7,14 +7,23 @@ public record ChatMessage(
     String content,
     String toolCallId,
     List<ToolCall> toolCalls,
-    String rawThinkingBlocksJson
+    String rawThinkingBlocksJson,
+    /** Base64-encoded image data (PNG/JPEG) for vision models. Null if no image. */
+    String imageBase64,
+    /** MIME type of the image (e.g., "image/png"). Null if no image. */
+    String imageMimeType
 ) {
     public ChatMessage(String role, String content) {
-        this(role, content, null, null, null);
+        this(role, content, null, null, null, null, null);
     }
 
     public ChatMessage(String role, String content, String toolCallId, List<ToolCall> toolCalls) {
-        this(role, content, toolCallId, toolCalls, null);
+        this(role, content, toolCallId, toolCalls, null, null, null);
+    }
+
+    public ChatMessage(String role, String content, String toolCallId, List<ToolCall> toolCalls,
+                       String rawThinkingBlocksJson) {
+        this(role, content, toolCallId, toolCalls, rawThinkingBlocksJson, null, null);
     }
 
     public static ChatMessage system(String content) {
@@ -44,7 +53,23 @@ public record ChatMessage(
     }
 
     public static ChatMessage toolResult(String toolCallId, String content) {
-        return new ChatMessage("tool", content, toolCallId, null, null);
+        return new ChatMessage("tool", content, toolCallId, null, null, null, null);
+    }
+
+    /**
+     * Create a user message with an image (for vision models).
+     *
+     * @param content    text prompt to accompany the image
+     * @param imageBase64 base64-encoded image data
+     * @param mimeType   MIME type (e.g., "image/png", "image/jpeg")
+     */
+    public static ChatMessage userWithImage(String content, String imageBase64, String mimeType) {
+        return new ChatMessage("user", content, null, null, null, imageBase64, mimeType);
+    }
+
+    /** Check if this message contains an image. */
+    public boolean hasImage() {
+        return imageBase64 != null && !imageBase64.isEmpty();
     }
 
     public boolean hasToolCalls() {

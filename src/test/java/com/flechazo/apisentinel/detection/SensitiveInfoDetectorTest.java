@@ -20,7 +20,12 @@ class SensitiveInfoDetectorTest {
                 RESP + "Set-Cookie: rememberMe=deleteMe; Path=/");
         assertEquals(1, hits.size());
         assertEquals("Shiro", hits.get(0).ruleName());
-        assertTrue(hits.get(0).matchedValue().contains("rememberMe=deleteMe"));
+        // P1-6: matchedValue() now returns the masked preview, not the
+        // raw value. The preview shows first-4 + … + last-4.
+        assertTrue(hits.get(0).matchedValue().startsWith("reme"));
+        // The raw value must NOT be in any stored field.
+        assertFalse(hits.get(0).matchedValue().contains("rememberMe=deleteMe"));
+        assertFalse(hits.get(0).fingerprint().contains("rememberMe=deleteMe"));
     }
 
     @Test

@@ -59,7 +59,7 @@ public class StepProgressPanel extends JPanel {
         JPanel headerTop = new JPanel(new BorderLayout(0, 0));
         headerTop.setOpaque(false);
         headerTop.setBorder(new EmptyBorder(10, 14, 6, 14));
-        JLabel title = new JLabel("执行步骤");
+        JLabel title = new JLabel(I18n.get("step_title"));
         title.setFont(theme.displayFont(Font.BOLD, 12f));
         title.setForeground(theme.headerFg());
         headerTop.add(title, BorderLayout.WEST);
@@ -137,7 +137,7 @@ public class StepProgressPanel extends JPanel {
             StepItem old = steps.get(idx);
             String safeDetail = detail != null ? detail : old.detail();
             if (safeDetail != null && safeDetail.length() > 10000) {
-                safeDetail = safeDetail.substring(0, 10000) + "\n...[截断]";
+                safeDetail = safeDetail.substring(0, 10000) + "\n...[truncated]";
             }
             StepItem updated = new StepItem(old.name(), StepStatus.COMPLETED, old.type(),
                     old.summary(), safeDetail,
@@ -241,46 +241,46 @@ public class StepProgressPanel extends JPanel {
 
     private String simplifyName(String name, StepType type) {
         return switch (type) {
-            case PROMPT -> "提问";
-            case THINKING -> "思考";
-            case RESPONSE -> "回复";
+            case PROMPT -> I18n.get("step_prompt");
+            case THINKING -> I18n.get("step_thinking");
+            case RESPONSE -> I18n.get("step_response");
             // Full Chinese mapping of the AgentToolRegistry names — a missing
             // entry falls back to the raw snake_case name, so newly added
             // tools degrade visibly instead of silently staying English.
             case TOOL_CALL -> switch (name) {
-                case "send_request" -> "发送请求";
-                case "heuristic_scan" -> "启发扫描";
-                case "analyze_traffic" -> "流量分析";
-                case "search_source_code" -> "代码搜索";
-                case "generate_payloads" -> "生成Payload";
-                case "test_auth_bypass" -> "越权测试";
-                case "list_sessions" -> "会话列表";
-                case "generate_oob_probe" -> "OOB探针生成";
-                case "check_oob_results" -> "OOB回连检查";
-                case "read_file" -> "读取文件";
-                case "grep_repo" -> "仓库文本搜索";
-                case "audit_codebase" -> "全局代码审计";
-                case "search_traffic" -> "流量搜索";
-                case "active_probe" -> "主动探测";
-                case "fingerprint_components" -> "组件指纹识别";
-                case "verify_boolean_blind" -> "布尔盲注验证";
-                case "verify_timing_blind" -> "时间盲注验证";
-                case "waf_bypass_retry" -> "WAF绕过重试";
-                case "verify_business_logic" -> "业务逻辑验证";
-                case "find_definition" -> "查找定义";
-                case "find_callers" -> "查找调用处";
-                case "verify_xss_reflection" -> "XSS反射验证";
-                case "verify_ssti" -> "模板注入验证";
-                case "verify_path_traversal" -> "路径穿越验证";
-                case "verify_xxe" -> "XXE验证";
-                case "diff_responses" -> "响应对比";
-                case "map_sibling_endpoints" -> "兄弟端点映射";
-                case "dispatch_explore_agent" -> "委派探索子Agent";
-                case "chain_hunter" -> "集群狩猎";
-                case "run_sandboxed_code" -> "沙箱代码验证";
-                case "trace_taint_source" -> "污点源回溯";
-                case "ask_user" -> "询问用户";
-                case "submit_report" -> "提交报告";
+                case "send_request" -> "Send Request";
+                case "heuristic_scan" -> "Heuristic Scan";
+                case "analyze_traffic" -> "Traffic Analysis";
+                case "search_source_code" -> "Code Search";
+                case "generate_payloads" -> "Generate Payloads";
+                case "test_auth_bypass" -> "Authz Test";
+                case "list_sessions" -> "Session List";
+                case "generate_oob_probe" -> "OOB Probe";
+                case "check_oob_results" -> "OOB Callback Check";
+                case "read_file" -> "Read File";
+                case "grep_repo" -> "Repo Text Search";
+                case "audit_codebase" -> "Codebase Audit";
+                case "search_traffic" -> "Traffic Search";
+                case "active_probe" -> "Active Probe";
+                case "fingerprint_components" -> "Component Fingerprint";
+                case "verify_boolean_blind" -> "Boolean Blind Verify";
+                case "verify_timing_blind" -> "Timing Blind Verify";
+                case "waf_bypass_retry" -> "WAF Bypass Retry";
+                case "verify_business_logic" -> "Business Logic Verify";
+                case "find_definition" -> "Find Definition";
+                case "find_callers" -> "Find Callers";
+                case "verify_xss_reflection" -> "XSS Reflection Verify";
+                case "verify_ssti" -> "SSTI Verify";
+                case "verify_path_traversal" -> "Path Traversal Verify";
+                case "verify_xxe" -> "XXE Verify";
+                case "diff_responses" -> "Response Diff";
+                case "map_sibling_endpoints" -> "Map Sibling Endpoints";
+                case "dispatch_explore_agent" -> "Dispatch Explore Agent";
+                case "chain_hunter" -> "Chain Hunter";
+                case "run_sandboxed_code" -> "Sandbox Code Verify";
+                case "trace_taint_source" -> "Taint Source Trace";
+                case "ask_user" -> "Ask User";
+                case "submit_report" -> "Submit Report";
                 default -> name;
             };
         };
@@ -288,20 +288,23 @@ public class StepProgressPanel extends JPanel {
 
     private String typeLabel(StepType type) {
         return switch (type) {
-            case PROMPT -> "提问";
-            case THINKING -> "思考";
-            case TOOL_CALL -> "工具";
-            case RESPONSE -> "回复";
+            case PROMPT -> I18n.get("step_prompt");
+            case THINKING -> I18n.get("step_thinking");
+            case TOOL_CALL -> I18n.get("step_tool");
+            case RESPONSE -> I18n.get("step_response");
         };
     }
 
-    /** Small emoji identifying the step kind, shown as the card icon. */
-    private String typeIcon(StepType type) {
+    /** Small vector icon identifying the step kind, shown as the card icon
+     *  (replaces the old emoji glyphs). Color is applied per call-site so a
+     *  completed step tints the whole set with the completion color. */
+    private Icon typeIcon(StepType type, Color color) {
+        int sz = 15;
         return switch (type) {
-            case PROMPT -> "📝";
-            case THINKING -> "💭";
-            case TOOL_CALL -> "🔧";
-            case RESPONSE -> "💬";
+            case PROMPT -> IconFactory.of(IconFactory.Kind.INFO, sz, color);
+            case THINKING -> IconFactory.of(IconFactory.Kind.ROBOT, sz, color);
+            case TOOL_CALL -> IconFactory.of(IconFactory.Kind.TOOLS, sz, color);
+            case RESPONSE -> IconFactory.of(IconFactory.Kind.RULES, sz, color);
         };
     }
 
@@ -404,19 +407,21 @@ public class StepProgressPanel extends JPanel {
         void updateIcon() {
             switch (item.status()) {
                 case COMPLETED -> {
-                    iconLabel.setText(typeIcon(item.type()));
-                    iconLabel.setForeground(theme.stepCompletedColor());
+                    iconLabel.setText("");
+                    iconLabel.setIcon(typeIcon(item.type(), theme.stepCompletedColor()));
                     statusLabel.setText("✓" + formatDuration(item.durationMs()));
                     statusLabel.setForeground(theme.stepCompletedColor());
                 }
                 case RUNNING -> {
+                    // 旋转字符仍用文本（几何符号跨平台一致，非 emoji）
+                    iconLabel.setIcon(null);
                     iconLabel.setText(SPIN[spinIndex]);
                     iconLabel.setForeground(theme.stepRunningColor());
                     statusLabel.setText("");
                 }
                 case ERROR -> {
-                    iconLabel.setText("⚠");
-                    iconLabel.setForeground(theme.errorColor());
+                    iconLabel.setText("");
+                    iconLabel.setIcon(IconFactory.of(IconFactory.Kind.WARN, 15, theme.errorColor()));
                     statusLabel.setText("✕" + formatDuration(item.durationMs()));
                     statusLabel.setForeground(theme.errorColor());
                 }
@@ -462,7 +467,7 @@ public class StepProgressPanel extends JPanel {
             bodyContent.removeAll();
             String detail = item.detail();
             if (detail == null || detail.isEmpty()) {
-                JLabel none = new JLabel("暂无内容");
+                JLabel none = new JLabel(I18n.get("step_no_content"));
                 none.setForeground(theme.stepCountFg());
                 none.setFont(theme.displayFont(Font.ITALIC, 12f));
                 bodyContent.add(none, BorderLayout.CENTER);
@@ -484,7 +489,7 @@ public class StepProgressPanel extends JPanel {
             // Append captured request/response for tool calls when available
             if (item.type() == StepType.TOOL_CALL) {
                 if (item.rawRequest() != null && !item.rawRequest().isEmpty()) {
-                    bodyContent.add(httpBlock("请求", item.rawRequest()), BorderLayout.SOUTH);
+                    bodyContent.add(httpBlock("Request", item.rawRequest()), BorderLayout.SOUTH);
                 }
             }
             bodyContent.revalidate();
@@ -498,7 +503,7 @@ public class StepProgressPanel extends JPanel {
             JLabel lbl = new JLabel(label);
             lbl.setFont(theme.displayFont(Font.BOLD, 11f));
             lbl.setForeground(theme.stepCountFg());
-            JTextArea ta = new JTextArea(text.length() > 2000 ? text.substring(0, 2000) + "\n...[截断]" : text);
+            JTextArea ta = new JTextArea(text.length() > 2000 ? text.substring(0, 2000) + "\n...[truncated]" : text);
             ta.setEditable(false);
             ta.setLineWrap(false);
             ta.setFont(theme.editorFont(11.5f));

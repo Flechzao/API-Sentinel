@@ -1,6 +1,5 @@
 package com.flechazo.apisentinel.ai.agent.tool;
 
-import com.flechazo.apisentinel.ui.CodeExecutionConfirmDialog;
 import com.flechazo.apisentinel.util.SandboxProcessRunner;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -104,18 +103,13 @@ public class RunSandboxedCodeTool implements AgentTool {
                 approved = bridge.askConfirmation("Agent 请求执行代码", purpose, code,
                         "允许执行", "拒绝", 300);
             }
-            if (approved == null && bridge == null) {
-                // Fallback: no bridge attached (no UI) — the old blocking dialog.
-                Frame owner = null;
-                burp.api.montoya.MontoyaApi mapi = null;
-                try {
-                    if (ctx.montoyaApi() != null) {
-                        mapi = ctx.montoyaApi();
-                        owner = mapi.userInterface().swingUtils().suiteFrame();
-                    }
-                } catch (Exception ignored) {}
-                approved = CodeExecutionConfirmDialog.confirmBlocking(
-                        owner, mapi, purpose, interpreter.name(), code);
+            if (approved == null) {
+                // No bridge attached (headless/CLI/test) — safe default is reject.
+                // Previously fell back to a Swing modal dialog (CodeExecutionConfirmDialog),
+                // but that created a reverse dependency from ai→ui. The dialog still
+                // exists for Burp mode; it's just not called from here anymore —
+                // Burp mode always provides a UserInteractionBridge (ChatInteractionBridge).
+                return "{\"success\": false, \"error\": \"无交互界面，无法确认代码执行（需在 Burp 中运行或启用 auto-approve）\"}";
             }
             if (!Boolean.TRUE.equals(approved)) {
                 return "{\"success\": false, \"error\": \"用户拒绝执行（或确认超时）\"}";

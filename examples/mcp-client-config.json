@@ -1,0 +1,44 @@
+{
+  "_comment": "MCP 客户端配置示例",
+  "_usage": "将 api-sentinel 部分复制到你的 MCP 客户端配置文件（如 Claude Code 的 .mcp.json）",
+  
+  "mcpServers": {
+    "api-sentinel": {
+      "type": "http",
+      "url": "http://127.0.0.1:9877/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN_HERE"
+      }
+    }
+  },
+  
+  "_setup_steps": {
+    "step1": "在 Burp 中启用 MCP Server（设置 → 高级 → MCP → 启用）",
+    "step2": "从 Burp 控制台复制 Auth Token（启动时打印）",
+    "step3": "替换上面的 YOUR_TOKEN_HERE 为真实 token",
+    "step4": "确保端口一致（默认 9877）",
+    "step5": "客户端所在机器需与 Burp 同机（仅绑定 127.0.0.1）"
+  },
+  
+  "_client_specific": {
+    "claude_code": {
+      "config_file": ".mcp.json",
+      "location": "项目根目录或 ~/.claude/.mcp.json"
+    },
+    "qoder": {
+      "config_file": "mcp.json",
+      "location": "Qoder 设置 → MCP"
+    },
+    "codex": {
+      "config_file": "mcp.json",
+      "location": "Codex MCP 配置"
+    }
+  },
+  
+  "_testing": {
+    "command": "curl -X POST http://127.0.0.1:9877/mcp -H 'Authorization: Bearer YOUR_TOKEN' -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}'",
+    "expected": "返回工具列表 JSON"
+  },
+  
+  "_active_tools_note": "默认只暴露只读工具。如需发包/主动探测工具，在 Burp 设置 → MCP 中勾选 '允许外部客户端调用主动/攻击类工具'（mcpAllowActiveTools=true）"
+}

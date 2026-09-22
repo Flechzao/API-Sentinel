@@ -99,7 +99,10 @@ public class BooleanBlindTool implements AgentTool {
             out.addProperty("detail", r.detail());
             return out.toString();
         } catch (Exception e) {
-            out.addProperty("error", e.getMessage());
+            out.addProperty("error", e.getMessage() != null
+                    ? e.getMessage().replace("\\", "\\\\").replace("\"", "\\\"")
+                        .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+                    : "unknown error");
             return out.toString();
         }
     }

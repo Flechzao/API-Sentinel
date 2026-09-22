@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "API Sentinel 系统架构",
+    "locale": "zh-CN",
+    "viewBox": [1300, 780],
+    "views": [
+      { "id": "main-flow", "label": "主检测流", "focus": ["traffic", "passive", "agent", "testing", "target"], "note": "流量捕获 → 被动检测 → AI Agent 验证 → 主动测试" },
+      { "id": "mcp-path", "label": "MCP 外部接入", "focus": ["ext_ai", "mcp", "tools", "repo"], "note": "外部 AI 大脑通过 MCP 接入全量工具" }
+    ]
+  },
+  "components": [
+    { "id": "target", "type": "cloud", "label": "目标 API", "sublabel": "被测应用", "pos": [520, 40], "size": [180, 60] },
+    { "id": "ext_ai", "type": "external", "label": "外部 AI 大脑", "sublabel": "Claude / Codex / Qoder", "pos": [1020, 40], "size": [240, 60] },
+
+    { "id": "traffic", "type": "frontend", "label": "流量捕获", "sublabel": "HttpTrafficHandler", "pos": [40, 200], "size": [200, 60] },
+    { "id": "passive", "type": "backend", "label": "被动检测引擎", "sublabel": "SQL错误 · JWT · CORS · WAF · 敏感信息", "pos": [340, 200], "size": [300, 60] },
+    { "id": "code_idx", "type": "database", "label": "源码索引", "sublabel": "TaintTracer · SinkMap", "pos": [740, 200], "size": [220, 60] },
+
+    { "id": "agent", "type": "backend", "label": "AgentLoop", "sublabel": "ReAct 循环 · 工具调度 · 上下文管理", "pos": [40, 380], "size": [260, 70] },
+    { "id": "tools", "type": "frontend", "label": "工具注册表", "sublabel": "50+ Agent 工具", "pos": [400, 380], "size": [200, 70] },
+    { "id": "evidence", "type": "database", "label": "证据存储", "sublabel": "FindingEvidenceStore", "pos": [700, 380], "size": [220, 70] },
+    { "id": "mcp", "type": "security", "label": "MCP Server", "sublabel": "会话管理 · 统一写回", "pos": [1020, 380], "size": [240, 70] },
+
+    { "id": "testing", "type": "backend", "label": "主动验证", "sublabel": "盲注 · SSTI · 业务逻辑 · 浏览器", "pos": [40, 560], "size": [280, 60] },
+    { "id": "llm", "type": "cloud", "label": "LLM Providers", "sublabel": "Claude · OpenAI · Ollama · DeepSeek", "pos": [420, 560], "size": [300, 60] },
+    { "id": "repo", "type": "database", "label": "ApiRepository", "sublabel": "接口状态 · 分析记录 · 报告导出", "pos": [820, 560], "size": [280, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Burp Extension", "wraps": ["traffic", "passive", "code_idx", "agent", "tools", "evidence", "mcp", "testing", "llm", "repo"] },
+    { "kind": "security-group", "label": "安全信任边界", "wraps": ["testing"] }
+  ],
+  "connections": [
+    { "id": "c1", "from": "traffic", "to": "target", "label": "转发请求", "fromSide": "top", "toSide": "left" },
+    { "id": "c2", "from": "traffic", "to": "passive", "label": "响应分析", "fromSide": "right", "toSide": "left" },
+    { "id": "c3", "from": "ext_ai", "to": "mcp", "label": "MCP 协议", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelAt": [1140, 200] },
+    { "id": "c4", "from": "mcp", "to": "tools", "label": "tools/call", "fromSide": "top", "toSide": "top", "via": [[1140, 340], [500, 340]], "labelAt": [800, 326] },
+    { "id": "c5", "from": "agent", "to": "tools", "label": "调度工具", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "c6", "from": "tools", "to": "evidence", "label": "写入证据", "fromSide": "right", "toSide": "left" },
+    { "id": "c7", "from": "agent", "to": "testing", "label": "验证假设", "fromSide": "bottom", "toSide": "top" },
+    { "id": "c8", "from": "testing", "to": "target", "label": "攻击 payload", "variant": "security", "fromSide": "left", "toSide": "left", "via": [[10, 590], [10, 70], [520, 70]] },
+    { "id": "c9", "from": "agent", "to": "llm", "label": "推理请求", "fromSide": "bottom", "toSide": "top" },
+    { "id": "c10", "from": "code_idx", "to": "tools", "label": "源码/污点", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "c11", "from": "evidence", "to": "repo", "label": "verdict 写回", "fromSide": "bottom", "toSide": "top" },
+    { "id": "c12", "from": "passive", "to": "repo", "label": "findings 落库", "fromSide": "bottom", "toSide": "top", "via": [[490, 290], [660, 290], [660, 520], [960, 520]], "labelAt": [660, 464] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "核心数据流", "items": ["流量 → 被动检测 → findings → Agent 验证 → confirmed_vulns", "MCP 外部大脑 → tools/call → 统一写回 → API 表格"] },
+    { "dot": "emerald", "title": "关键设计", "items": ["MCP 会话化：每会话独占 ToolContext，解锁 50+ 工具", "模型分层：轻量模型做 payload，主模型做判定", "证据校验：verdict 经证据秤仲裁后落库"] },
+    { "dot": "rose", "title": "安全边界", "items": ["主动验证需显式授权 (mcpAllowActiveTools)", "浏览器引擎隔离在安全信任边界内"] }
+  ]
+}

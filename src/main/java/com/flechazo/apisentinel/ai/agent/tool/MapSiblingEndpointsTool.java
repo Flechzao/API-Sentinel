@@ -36,6 +36,9 @@ public class MapSiblingEndpointsTool implements AgentTool {
     public String name() { return "map_sibling_endpoints"; }
 
     @Override
+    public boolean isReadOnly() { return true; }
+
+    @Override
     public String description() {
         return "从已索引的代码仓库定位当前接口的后端路由，并列出它的兄弟端点："
              + "同一 Controller 类中的其它路由方法（same_controller——发现的鉴权/校验缺陷"

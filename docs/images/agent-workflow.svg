@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="942" viewBox="0 0 880 942" role="img" aria-labelledby="title desc">
+  <title id="title">Agent 自主调查整体流程</title>
+  <desc id="desc">选中接口并装配上下文后，LLM 自主调查，按线索选择读取流量与源码、AI 推理、发送请求取证等工具，结果回填后继续调查。证据就绪时提交报告；门禁不通过返回原因并回到调查，通过后进行结论复核并输出报告。</desc>
+  <defs>
+    <marker id="arrowBlue" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2563eb"/></marker>
+    <marker id="arrowPurple" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#7c3aed"/></marker>
+    <marker id="arrowGreen" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#10a37f"/></marker>
+    <marker id="arrowOrange" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#d97706"/></marker>
+    <filter id="shadowSoft" x="-10%" y="-15%" width="120%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.07"/></filter>
+    <style>
+      text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .title { font-size: 26px; font-weight: 700; fill: #111827; }
+      .heading { font-size: 16px; font-weight: 700; fill: #111827; }
+      .body { font-size: 15px; fill: #475569; }
+      .label { font-size: 13px; font-weight: 500; fill: #64748b; }
+      .blue { fill: #2563eb; } .purple { fill: #7c3aed; }
+      .green { fill: #087f65; } .orange { fill: #b45309; }
+      .edge { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+      .card { fill: #ffffff; stroke-width: 1.4; filter: url(#shadowSoft); }
+    </style>
+  </defs>
+  <rect width="880" height="942" fill="#ffffff"/>
+  <text x="440" y="44" text-anchor="middle" class="title">Agent 自主调查整体流程</text>
+  <text x="440" y="72" text-anchor="middle" class="body">面向单个接口：自主选工具、真实取证、门禁通过后输出报告</text>
+
+  <rect x="64" y="106" width="304" height="84" rx="10" class="card" stroke="#2563eb"/>
+  <text x="84" y="136" class="heading blue">选中接口</text>
+  <text x="84" y="162" class="body">以捕获的请求 / 响应为起点</text>
+  <path d="M368 148 H448" class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)"/>
+  <text x="408" y="134" text-anchor="middle" class="label blue">启动</text>
+  <rect x="448" y="106" width="368" height="84" rx="10" class="card" stroke="#2563eb"/>
+  <text x="468" y="136" class="heading blue">装配上下文</text>
+  <text x="468" y="162" class="body">System Prompt · 会话 · 源码与工具</text>
+  <path d="M632 190 V214 H404 V232" class="edge" stroke="#2563eb" marker-end="url(#arrowBlue)"/>
+
+  <rect x="64" y="232" width="680" height="346" rx="12" fill="#f5f3ff" stroke="#c4b5fd" stroke-dasharray="5 5"/>
+  <text x="84" y="262" class="heading purple">自主调查 · LLM 决定下一步</text>
+  <text x="84" y="286" class="body">工具按需选择，并非固定串行阶段；结果回填后继续调查</text>
+  <rect x="224" y="308" width="360" height="72" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="244" y="336" class="heading purple">理解线索 · 选择工具 · 组织证据</text>
+  <text x="244" y="360" class="body">根据工具结果调整假设与测试方向</text>
+
+  <!-- Fan-out means tool categories to choose from, not sequential stages. -->
+  <path d="M404 380 V408 H180 V434" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <path d="M404 408 V434" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <path d="M404 408 H628 V434" class="edge" stroke="#7c3aed" marker-end="url(#arrowPurple)"/>
+  <text x="424" y="400" class="label purple">按需选择</text>
+
+  <rect x="84" y="434" width="192" height="116" rx="10" class="card" stroke="#2563eb"/>
+  <text x="104" y="462" class="heading blue">读流量 / 代码</text>
+  <text x="104" y="488" class="body">search_traffic</text>
+  <text x="104" y="510" class="body">search_source_code</text>
+  <text x="104" y="532" class="body">audit_codebase</text>
+  <rect x="308" y="434" width="192" height="116" rx="10" class="card" stroke="#7c3aed"/>
+  <text x="328" y="462" class="heading purple">推理 / 构造测试</text>
+  <text x="328" y="488" class="body">analyze_traffic</text>
+  <text x="328" y="510" class="body">generate_payloads</text>
+  <text x="328" y="532" class="body">理解语义与测试目标</text>
+  <rect x="532" y="434" width="192" height="116" rx="10" class="card" stroke="#10a37f"/>
+  <text x="552" y="462" class="heading green">发请求取证</text>
+  <text x="552" y="488" class="body">send_request</text>
+  <text x="552" y="510" class="body">verify_*</text>
+  <text x="552" y="532" class="body">test_auth_bypass</text>
+
+  <path d="M180 550 V596 H628 V550" class="edge" stroke="#10a37f"/>
+  <path d="M180 596 H40 V344 H224" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="84" y="330" class="label green">结果回填</text>
+  <text x="84" y="368" class="label green">继续调查</text>
+  <path d="M404 550 V654" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="424" y="626" class="label green">证据就绪 · 提交报告</text>
+
+  <rect x="96" y="654" width="616" height="116" rx="12" fill="#f0fdf4" stroke="#86d5b4" stroke-dasharray="5 5"/>
+  <text x="116" y="684" class="heading green">提交门禁 · submit_report</text>
+  <text x="116" y="710" class="body">启发扫描 · 配库审计 · 验证覆盖 · 真实请求</text>
+  <text x="116" y="738" class="body">任一门禁拒绝：返回具体原因，补齐后重新提交</text>
+
+  <!-- Rejection returns to the investigation node along an outer channel. -->
+  <path d="M712 712 H812 V344 H584" class="edge" stroke="#d97706" marker-end="url(#arrowOrange)"/>
+  <text x="744" y="638" class="label orange">未通过</text>
+  <text x="744" y="660" class="label orange">补齐重提</text>
+  <path d="M404 770 V830" class="edge" stroke="#10a37f" marker-end="url(#arrowGreen)"/>
+  <text x="424" y="804" class="label green">门禁通过 · 结论复核</text>
+  <rect x="184" y="830" width="440" height="80" rx="10" class="card" stroke="#10a37f"/>
+  <text x="204" y="858" class="heading green">输出报告 / verdict</text>
+  <text x="204" y="884" class="body">confirmed / suspected · 降级理由 · 可追溯证据</text>
+</svg>

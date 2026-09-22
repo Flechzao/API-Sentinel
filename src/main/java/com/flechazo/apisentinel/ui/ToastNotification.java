@@ -40,7 +40,9 @@ public class ToastNotification extends JWindow {
      * @param type        the toast type (DANGER, WARNING, SUCCESS, INFO)
      * @param durationMs  how long to show before fading (milliseconds)
      */
-    private static int activeToastCount = 0;
+    // P3-5: changed from plain int to AtomicInteger for thread safety.
+    private static final java.util.concurrent.atomic.AtomicInteger activeToastCount =
+            new java.util.concurrent.atomic.AtomicInteger(0);
 
     public static void show(Component parent, String message, ToastType type, int durationMs) {
         SwingUtilities.invokeLater(() -> {
@@ -77,10 +79,10 @@ public class ToastNotification extends JWindow {
         content.setBackground(type.background);
         content.setBorder(new EmptyBorder(10, 16, 10, 16));
 
-        // Icon
+        // Icon — vector badge (white disc + type-colored glyph) instead of an
+        // emoji char, so it renders identically across platforms/fonts and
+        // sits crisply on the toast's saturated background.
         JLabel iconLabel = new JLabel(getIcon(type));
-        iconLabel.setForeground(type.foreground);
-        iconLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
         content.add(iconLabel, BorderLayout.WEST);
 
         // Message — a line-wrapping JTextArea instead of an <html> JLabel.
@@ -141,7 +143,7 @@ public class ToastNotification extends JWindow {
     }
 
     private void positionToast(Component parent) {
-        int toastIndex = activeToastCount++;
+        int toastIndex = activeToastCount.getAndIncrement();
         Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
         int x, y;
 
@@ -186,18 +188,21 @@ public class ToastNotification extends JWindow {
     private void dismiss() {
         if (fadeTimer != null) fadeTimer.stop();
         if (dismissTimer != null) dismissTimer.stop();
-        activeToastCount = Math.max(0, activeToastCount - 1);
+        activeToastCount.set(Math.max(0, activeToastCount.get() - 1));
         setVisible(false);
         dispose();
     }
 
-    private String getIcon(ToastType type) {
-        return switch (type) {
-            case DANGER -> "!";
-            case WARNING -> "!";
-            case SUCCESS -> "OK";
-            case INFO -> "i";
+    private javax.swing.Icon getIcon(ToastType type) {
+        // White badge fill, glyph tinted with the toast's own accent color so
+        // it reads as an inset mark on the saturated background.
+        IconFactory.Kind kind = switch (type) {
+            case DANGER -> IconFactory.Kind.FAIL;
+            case WARNING -> IconFactory.Kind.WARN;
+            case SUCCESS -> IconFactory.Kind.OK;
+            case INFO -> IconFactory.Kind.INFO;
         };
+        return IconFactory.badge(kind, 18, Color.WHITE, type.background);
     }
 
     /**
@@ -246,5 +251,10 @@ public class ToastNotification extends JWindow {
             stopTimer.setRepeats(false);
             stopTimer.start();
         });
+    }
+
+    /** P3-5: test-only reset. */
+    public static void resetForTest() {
+        activeToastCount.set(0);
     }
 }

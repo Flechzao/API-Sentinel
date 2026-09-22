@@ -1,7 +1,7 @@
 package com.flechazo.apisentinel.ui;
+import com.flechazo.apisentinel.event.UiEventBus;
 
 import burp.api.montoya.MontoyaApi;
-import burp.api.montoya.core.Annotations;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.ui.contextmenu.ContextMenuEvent;
@@ -9,10 +9,7 @@ import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
 import com.flechazo.apisentinel.logging.LeveledLogger;
 import com.flechazo.apisentinel.matching.CompositeMatchEngine;
 import com.flechazo.apisentinel.model.ApiEntry;
-import com.flechazo.apisentinel.model.ApiStatus;
-import com.flechazo.apisentinel.model.VulnType;
 import com.flechazo.apisentinel.repository.ApiRepository;
-import com.flechazo.apisentinel.util.BambdaCodeGen;
 import com.flechazo.apisentinel.util.UrlUtils;
 
 import javax.swing.*;
@@ -36,6 +33,10 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
     /** Callback to trigger full Pipeline analysis for a given ApiEntry. */
     private java.util.function.Consumer<ApiEntry> pipelineAnalyzeHandler;
 
+    /** Callback to extract session credentials from a request into the
+     *  auth-config panel. Signature: (slot "A" or "B", credentials). */
+    private java.util.function.BiConsumer<String, com.flechazo.apisentinel.auth.SessionCredentials> extractSessionHandler;
+
     public ContextMenuProvider(MontoyaApi api, ApiRepository repository,
                                CompositeMatchEngine matchEngine,
                                com.flechazo.apisentinel.ai.queue.AnalysisTaskQueue analysisQueue,
@@ -52,6 +53,10 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
         this.pipelineAnalyzeHandler = handler;
     }
 
+    public void setExtractSessionHandler(java.util.function.BiConsumer<String, com.flechazo.apisentinel.auth.SessionCredentials> handler) {
+        this.extractSessionHandler = handler;
+    }
+
     @Override
     public List<Component> provideMenuItems(ContextMenuEvent event) {
         List<Component> items = new ArrayList<>();
@@ -63,12 +68,13 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
         JMenu sentinel = new JMenu("API Sentinel");
         sentinel.setFont(theme.displayFont(Font.BOLD, 12f));
 
-        // --- 🔍 Pipeline 分析 (primary action, prominent) ---
-        JMenuItem pipelineItem = new JMenuItem("🔍 Pipeline 分析");
-        pipelineItem.setFont(theme.displayFont(Font.BOLD, 12f));
-        pipelineItem.setToolTipText("完整5阶段分析（流量→代码→Payload→验证→研判）");
-        pipelineItem.addActionListener(e -> sentinelPipelineFromContext(selected));
-        sentinel.add(pipelineItem);
+        // --- AI 分析 (primary action, follows toolbar mode toggle) ---
+        JMenuItem analyzeItem = new JMenuItem("AI 分析");
+        analyzeItem.setIcon(IconFactory.of(IconFactory.Kind.SEARCH, 14, theme.accentBg()));
+        analyzeItem.setFont(theme.displayFont(Font.BOLD, 12f));
+        analyzeItem.setToolTipText("根据工具栏模式执行 Agent 或 Pipeline 分析");
+        analyzeItem.addActionListener(e -> sentinelPipelineFromContext(selected));
+        sentinel.add(analyzeItem);
 
         sentinel.addSeparator();
 
@@ -77,56 +83,24 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
         addApi.addActionListener(e -> addApiFromSelection(selected));
         sentinel.add(addApi);
 
-        // --- 标记状态 ▸ (submenu with specific states) ---
-        JMenu statusMenu = new JMenu("标记状态");
-        for (ApiStatus status : ApiStatus.values()) {
-            JMenuItem item = new JMenuItem(status.getDisplayName());
-            item.addActionListener(e -> setTestStatus(selected, status));
-            statusMenu.add(item);
-        }
-        sentinel.add(statusMenu);
+        // --- 越权配置快捷操作 (3 sessions) ---
+        JMenuItem extractSessionA = new JMenuItem("提取为会话 A（越权配置）");
+        extractSessionA.addActionListener(e -> extractSessionFromContext(selected, "A"));
+        sentinel.add(extractSessionA);
 
-        // --- 标记漏洞 ▸ ---
-        JMenu vulnMenu = new JMenu("标记漏洞");
-        for (VulnType vt : VulnType.values()) {
-            JMenuItem item = new JMenuItem(vt.getDisplayName());
-            item.addActionListener(e -> markVulnerability(selected, vt));
-            vulnMenu.add(item);
-        }
-        sentinel.add(vulnMenu);
+        JMenuItem extractSessionB = new JMenuItem("提取为会话 B（越权配置）");
+        extractSessionB.addActionListener(e -> extractSessionFromContext(selected, "B"));
+        sentinel.add(extractSessionB);
 
-        sentinel.addSeparator();
-
-        // --- 生成 Bambda 代码 ---
-        JMenuItem bambdaItem = new JMenuItem("生成 Bambda 代码");
-        bambdaItem.addActionListener(e -> generateBambdaFromContext(selected));
-        sentinel.add(bambdaItem);
+        JMenuItem extractSessionC = new JMenuItem("提取为会话 C（越权配置）");
+        extractSessionC.addActionListener(e -> extractSessionFromContext(selected, "C"));
+        sentinel.add(extractSessionC);
 
         items.add(sentinel);
         return items;
     }
 
     // ======================== Actions ========================
-
-    private void setTestStatus(List<HttpRequestResponse> messages, ApiStatus targetStatus) {
-        for (HttpRequestResponse msg : messages) {
-            String urlPath = UrlUtils.extractPath(msg.request().url());
-            List<ApiEntry> matches = matchEngine.match(urlPath, null);
-            if (!matches.isEmpty()) {
-                ApiEntry entry = matches.get(0);
-                if (targetStatus == ApiStatus.VULNERABLE) {
-                    entry.updateStatus(targetStatus, VulnType.GENERIC, VulnType.GENERIC.getDisplayName());
-                } else {
-                    entry.updateStatus(targetStatus, null, targetStatus.getDisplayName());
-                }
-                Annotations annotations = Annotations.annotations(
-                        entry.getResult(), entry.getStatus().getHighlightColor());
-                msg.annotations().setHighlightColor(annotations.highlightColor());
-                msg.annotations().setNotes(annotations.notes());
-            }
-        }
-        uiEventBus.postImmediateRefresh();
-    }
 
     private void addApiFromSelection(List<HttpRequestResponse> messages) {
         int added = 0;
@@ -151,23 +125,6 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
             logger.info("右键添加 %d 个 API 到监控列表", added);
             uiEventBus.postImmediateRefresh();
         }
-    }
-
-    private void markVulnerability(List<HttpRequestResponse> messages, VulnType vulnType) {
-        for (HttpRequestResponse msg : messages) {
-            String urlPath = UrlUtils.extractPath(msg.request().url());
-            List<ApiEntry> matches = matchEngine.match(urlPath, null);
-            if (!matches.isEmpty()) {
-                ApiEntry entry = matches.get(0);
-                entry.updateStatus(ApiStatus.VULNERABLE, vulnType, vulnType.getDisplayName());
-                Annotations annotations = Annotations.annotations(
-                        vulnType.getDisplayName(), vulnType.getHighlightColor());
-                msg.annotations().setHighlightColor(annotations.highlightColor());
-                msg.annotations().setNotes(annotations.notes());
-                logger.info("标记漏洞: %s -> %s", entry.getApiPath(), vulnType.getDisplayName());
-            }
-        }
-        uiEventBus.postImmediateRefresh();
     }
 
     private void sentinelPipelineFromContext(List<HttpRequestResponse> messages) {
@@ -200,7 +157,7 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
                 storeTraffic(entry, msg);
 
                 pipelineAnalyzeHandler.accept(entry);
-                logger.info("右键 Pipeline 分析: %s %s", method, urlPath);
+                logger.info("右键 AI 分析: %s %s", method, urlPath);
             } catch (Exception ex) {
                 logger.error("右键 Pipeline 分析异常: %s", ex.getMessage());
             }
@@ -208,31 +165,58 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
         uiEventBus.postImmediateRefresh();
     }
 
-    private void generateBambdaFromContext(List<HttpRequestResponse> messages) {
-        List<ApiEntry> entries = new ArrayList<>();
+    // ======================== Helpers ========================
+
+    /**
+     * Extract credentials from all selected requests and push them into the
+     * auth-config panel as Session A, B, or C. When multiple requests are
+     * selected, cookies and auth headers are merged (deduplicated by key),
+     * so selecting 5 requests from the same user yields a complete credential
+     * bundle rather than just the first request's headers.
+     *
+     * <p>After extraction, shows a toast with a credential preview so the
+     * user gets immediate feedback about what was captured.
+     */
+    private void extractSessionFromContext(List<HttpRequestResponse> messages, String slot) {
+        if (extractSessionHandler == null || messages.isEmpty()) {
+            logger.warn("提取会话: handler 未注册或无选中请求");
+            return;
+        }
+        // Merge credentials from ALL selected requests (not just the first).
+        // Multiple requests from the same user may carry different cookies
+        // (CSRF tokens, rotating session IDs) or different auth headers.
+        java.util.Map<String, String> cookies = new java.util.LinkedHashMap<>();
+        java.util.Map<String, String> authHeaders = new java.util.LinkedHashMap<>();
         for (HttpRequestResponse msg : messages) {
-            String url = msg.request().url();
-            String urlPath = UrlUtils.extractPath(url);
-            List<ApiEntry> matches = matchEngine.match(urlPath, null);
-            if (!matches.isEmpty()) {
-                entries.add(matches.get(0));
-            } else {
-                ApiEntry temp = new ApiEntry(msg.request().method(), urlPath);
-                temp.setDomain(UrlUtils.stripPort(UrlUtils.extractHost(url)));
-                entries.add(temp);
+            if (msg.request() == null) continue;
+            for (HttpHeader header : msg.request().headers()) {
+                String name = header.name();
+                String lower = name.toLowerCase();
+                if ("cookie".equals(lower)) {
+                    cookies.putAll(com.flechazo.apisentinel.auth.SessionDiscovery.parseCookies(header.value()));
+                } else if (com.flechazo.apisentinel.util.AuthHeaders.isAuthHeader(lower) && !"cookie".equals(lower)) {
+                    authHeaders.putIfAbsent(name, header.value());
+                }
             }
         }
-        if (entries.isEmpty()) return;
-
-        String code = entries.size() == 1
-                ? BambdaCodeGen.generate(entries.get(0))
-                : BambdaCodeGen.generateBatch(entries);
-        java.awt.datatransfer.StringSelection sel = new java.awt.datatransfer.StringSelection(code);
-        java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
-        logger.info("已生成 Bambda 代码并复制到剪贴板 (%d 个API)", entries.size());
+        com.flechazo.apisentinel.auth.SessionCredentials creds =
+                new com.flechazo.apisentinel.auth.SessionCredentials(cookies, authHeaders);
+        if (creds.isEmpty()) {
+            logger.warn("提取会话: 选中的 %d 个请求均没有认证信息", messages.size());
+            ToastNotification.show(null,
+                    "选中的请求均没有认证信息（Cookie 或 Auth 头）",
+                    ToastNotification.ToastType.WARNING, 3000);
+            return;
+        }
+        extractSessionHandler.accept(slot, creds);
+        String preview = creds.preview();
+        String msg = messages.size() > 1
+                ? String.format("已提取 %d 个请求的凭证到会话 %s — %s", messages.size(), slot, preview)
+                : String.format("已提取到会话 %s — %s", slot, preview);
+        logger.info("右键提取为会话 %s: %s (%d cookies, %d auth headers)",
+                slot, preview, cookies.size(), authHeaders.size());
+        ToastNotification.show(null, msg, ToastNotification.ToastType.SUCCESS, 3000);
     }
-
-    // ======================== Helpers ========================
 
     /** Store raw request/response from HttpRequestResponse into ApiEntry. */
     private void storeTraffic(ApiEntry entry, HttpRequestResponse msg) {

@@ -47,15 +47,19 @@ public class FullReportExporter implements ReportExporter {
         long vulnerable = entries.stream().filter(e -> e.getStatus() == ApiStatus.VULNERABLE).count();
         long passed = entries.stream().filter(e -> e.getStatus() == ApiStatus.PASSED).count();
         long underTest = entries.stream().filter(e -> e.getStatus() == ApiStatus.UNDER_TEST).count();
+        // P2-1 fix: Include PENDING_REVIEW (suspected findings awaiting human review)
+        long pendingReview = entries.stream().filter(e -> e.getStatus() == ApiStatus.PENDING_REVIEW).count();
 
         double testedPct = entries.isEmpty() ? 0 : tested * 100.0 / entries.size();
         sb.append(String.format("| 已测试 | %d (%.1f%%) |\n", tested, testedPct));
         sb.append("| 测试通过 | ").append(passed).append(" |\n");
         sb.append("| 存在漏洞 | ").append(vulnerable).append(" |\n");
+        sb.append("| 待评估 | ").append(pendingReview).append(" |\n");
         sb.append("| 测试中 | ").append(underTest).append(" |\n");
         sb.append("| 未测试 | ").append(untested).append(" |\n\n");
 
         // Count findings by risk level across all entries
+        // Phase 1: Stage 1 findings (Pipeline mode's initial traffic analysis)
         int highCount = 0, medCount = 0, lowCount = 0, infoCount = 0;
         int totalFindings = 0;
         for (ApiEntry entry : entries) {
@@ -68,6 +72,42 @@ public class FullReportExporter implements ReportExporter {
                             case "MEDIUM" -> medCount++;
                             case "LOW" -> lowCount++;
                             default -> infoCount++;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 2: Agent/Agent mode verdicts (P0-1 fix)
+        // Agent mode stores real findings in pipelineResult().verdict(), not in
+        // Stage 1 result.findings(). Aggregate confirmedVulns as HIGH, suspectedVulns
+        // as MEDIUM. Deduplicate by type+title to avoid cascade pollution counting
+        // the same vuln multiple times across sibling endpoints.
+        Set<String> seenVulnKeys = new HashSet<>();
+        for (ApiEntry entry : entries) {
+            for (AnalysisRecord record : entry.getAnalysisHistory()) {
+                if (record.hasPipelineResult() && record.pipelineResult().verdict() != null) {
+                    FinalVerdict verdict = record.pipelineResult().verdict();
+
+                    // Count confirmed vulns (HIGH severity)
+                    if (verdict.confirmedVulns() != null) {
+                        for (ConfirmedVuln cv : verdict.confirmedVulns()) {
+                            String key = cv.type() + ":" + cv.title();
+                            if (seenVulnKeys.add(key)) {
+                                highCount++;
+                                totalFindings++;
+                            }
+                        }
+                    }
+
+                    // Count suspected vulns (MEDIUM severity)
+                    if (verdict.suspectedVulns() != null) {
+                        for (SuspectedVuln sv : verdict.suspectedVulns()) {
+                            String key = sv.type() + ":" + sv.title();
+                            if (seenVulnKeys.add(key)) {
+                                medCount++;
+                                totalFindings++;
+                            }
                         }
                     }
                 }
@@ -91,6 +131,7 @@ public class FullReportExporter implements ReportExporter {
         sb.append("```\n");
         appendBarChart(sb, "已通过", (int) passed, entries.size());
         appendBarChart(sb, "有漏洞", (int) vulnerable, entries.size());
+        appendBarChart(sb, "待评估", (int) pendingReview, entries.size());
         appendBarChart(sb, "测试中", (int) underTest, entries.size());
         appendBarChart(sb, "未测试", (int) untested, entries.size());
         sb.append("```\n\n");
@@ -249,9 +290,20 @@ public class FullReportExporter implements ReportExporter {
                         }
                         sb.append("- 验证门禁: ");
                         if (verdict.rejectionReasons() == null || verdict.rejectionReasons().isEmpty()) {
-                            sb.append("全部校验通过\n");
+                            // P0-2 fix: Even if rejectionReasons is empty (e.g., persistence lost),
+                            // check suspected vulns for demotion markers as fallback audit trail
+                            long demotedCount = verdict.suspectedVulns() != null
+                                    ? verdict.suspectedVulns().stream()
+                                            .filter(sv -> sv.reason() != null && sv.reason().contains("降级"))
+                                            .count()
+                                    : 0;
+                            if (demotedCount > 0) {
+                                sb.append("拦截 ").append(demotedCount).append(" 条未实证 confirmed（已降级为疑似）\n");
+                            } else {
+                                sb.append("全部校验通过\n");
+                            }
                         } else {
-                            sb.append("\n");
+                            sb.append("拦截 ").append(verdict.rejectionReasons().size()).append(" 条\n");
                             for (String r : verdict.rejectionReasons()) {
                                 sb.append("  - ").append(r).append("\n");
                             }

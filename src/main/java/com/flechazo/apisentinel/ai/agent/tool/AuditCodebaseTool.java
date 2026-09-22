@@ -42,7 +42,7 @@ public class AuditCodebaseTool implements AgentTool {
              + "vulnerabilities: pick high-risk sinks, read their code (read_file), trace the interpolated "
              + "variables back to their (possibly user-controlled, possibly stored) source, then map to the "
              + "endpoint that reaches them and verify with traffic. Free, no requests sent. "
-             + "Optional 'sink_type' filter (command|sql|file_access|deserialization|ssrf|crypto|insecure_random).";
+             + "Optional 'sink_type' filter (command|sql|file_access|deserialization|ssrf|crypto|insecure_random|xxe|ssti|crlf|open_redirect|nosql).";
     }
 
     @Override
@@ -54,7 +54,7 @@ public class AuditCodebaseTool implements AgentTool {
         JsonObject typeProp = new JsonObject();
         typeProp.addProperty("type", "string");
         typeProp.addProperty("description", "Optional sink type filter: command, sql, file_access, "
-                + "deserialization, ssrf, crypto, insecure_random. Omit for all types.");
+                + "deserialization, ssrf, crypto, insecure_random, xxe, ssti, crlf, open_redirect, nosql. Omit for all types.");
         props.add("sink_type", typeProp);
 
         JsonObject maxProp = new JsonObject();
@@ -88,7 +88,9 @@ public class AuditCodebaseTool implements AgentTool {
             if (args.has("max_results")) {
                 maxResults = Math.min(Math.max(args.get("max_results").getAsInt(), 1), MAX_SINKS_CAP);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            ctx.logger().debug("[audit_codebase] 参数解析失败，使用默认值: %s", e.getMessage());
+        }
 
         // Explicit sink_type filter wins; otherwise, if the high-risk-only scope
         // control is enabled (cost control), restrict to the high-risk sink types.
@@ -159,6 +161,11 @@ public class AuditCodebaseTool implements AgentTool {
             case "ssrf" -> SinkMap.SinkType.SSRF;
             case "crypto", "weak_crypto" -> SinkMap.SinkType.CRYPTO;
             case "insecure_random", "rng" -> SinkMap.SinkType.INSECURE_RANDOM;
+            case "xxe" -> SinkMap.SinkType.XXE;
+            case "ssti" -> SinkMap.SinkType.SSTI;
+            case "crlf" -> SinkMap.SinkType.CRLF;
+            case "open_redirect", "redirect" -> SinkMap.SinkType.OPEN_REDIRECT;
+            case "nosql" -> SinkMap.SinkType.NOSQL;
             default -> null;
         };
     }

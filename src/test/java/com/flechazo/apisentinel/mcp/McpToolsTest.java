@@ -29,13 +29,70 @@ class McpToolsTest {
 
     @Test
     void listTools_advertisesAllTools() {
-        McpTools tools = newTools(new InMemoryApiRepository());
+        LeveledLogger logger = new LeveledLogger(null);
+        ConfigManager cm = new ConfigManager(logger);
+        // Deterministic: set in-memory (AppConfig setter, no disk write) so the
+        // test doesn't depend on the developer's ambient saved config.
+        cm.getConfig().setMcpAllowActiveTools(false);
+        McpTools tools = new McpTools(new InMemoryApiRepository(), new LlmProviderFactory(),
+                cm, new CodeIndexService(logger), logger);
+
         Set<String> names = tools.listTools().stream()
                 .map(McpProtocol.ToolDef::name).collect(Collectors.toSet());
-        assertEquals(Set.of("list_apis", "get_api_detail", "get_passive_findings",
+        // Native curated tools are always advertised.
+        assertTrue(names.containsAll(Set.of("list_apis", "get_api_detail", "get_passive_findings",
                         "get_analysis_history", "analyze_api", "search_code", "get_source_code",
-                        "analyze_batch", "get_untracked_apis", "get_latest_events"),
-                names);
+                        "analyze_batch", "get_untracked_apis", "get_latest_events", "validate_findings",
+                        "ingest_traffic", "audit_codebase", "read_file", "trace_taint_source",
+                        "find_definition", "find_callers", "map_sibling_endpoints",
+                        "browser_discover", "browser_dom_xss", "browser_render")),
+                "native tools missing: " + names);
+        // The session registry adds the wider agent toolset (read-only ones
+        // available even without provider/browser).
+        assertTrue(names.contains("search_source_code"), "registry tools should merge in: " + names);
+        // Active/dangerous tools are gated off when mcpAllowActiveTools=false.
+        assertFalse(names.contains("send_request"), "active tools must be gated: " + names);
+        assertFalse(names.contains("run_sandboxed_code"), "active tools must be gated: " + names);
+
+        // Flip the gate on (in-memory) → active tools now advertised.
+        cm.getConfig().setMcpAllowActiveTools(true);
+        Set<String> gatedOpen = tools.listTools().stream()
+                .map(McpProtocol.ToolDef::name).collect(Collectors.toSet());
+        assertTrue(gatedOpen.contains("send_request"), "active tools should appear when allowed: " + gatedOpen);
+    }
+
+    @Test
+    void ingestTraffic_createsEntryVisibleInTable() {
+        InMemoryApiRepository repo = new InMemoryApiRepository();
+        McpTools tools = newTools(repo);
+        JsonObject args = new JsonObject();
+        args.addProperty("path", "/api/ext/discovered");
+        args.addProperty("method", "POST");
+        args.addProperty("domain", "ext.example.com");
+        args.addProperty("request", "POST /api/ext/discovered HTTP/1.1\r\nHost: ext.example.com\r\n\r\n");
+        McpTools.ToolResult r = tools.callTool("ingest_traffic", args);
+        assertFalse(r.isError(), r.text());
+        JsonObject out = JsonParser.parseString(r.text()).getAsJsonObject();
+        assertTrue(out.get("created").getAsBoolean());
+        assertTrue(out.get("hasTraffic").getAsBoolean());
+        // The endpoint the external brain discovered is now in the repository.
+        ApiEntry e = repo.findByPath("/api/ext/discovered").orElseThrow();
+        assertEquals("POST", e.getHttpMethod());
+        assertEquals("ext.example.com", e.getDomain());
+    }
+
+    @Test
+    void ingestTraffic_updatesExistingEntry() {
+        InMemoryApiRepository repo = new InMemoryApiRepository();
+        ApiEntry e = new ApiEntry("GET", "/api/x"); repo.add(e);
+        McpTools tools = newTools(repo);
+        JsonObject args = new JsonObject();
+        args.addProperty("path", "/api/x");
+        args.addProperty("domain", "x.com");
+        McpTools.ToolResult r = tools.callTool("ingest_traffic", args);
+        JsonObject out = JsonParser.parseString(r.text()).getAsJsonObject();
+        assertTrue(out.get("updated").getAsBoolean());
+        assertEquals("x.com", repo.findByPath("/api/x").orElseThrow().getDomain());
     }
 
     @Test

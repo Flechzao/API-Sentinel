@@ -86,10 +86,9 @@ public class ExportPresenter {
             Path path = chooser.getSelectedFile().toPath();
             List<ApiEntry> toExport = exportSelected ? getSelectedEntries() : repository.findAll();
             exporter.export(toExport, path);
-            JOptionPane.showMessageDialog(view, "导出成功: " + path + " (" + toExport.size() + " 条)",
-                    label, JOptionPane.INFORMATION_MESSAGE);
+            ThemedDialogs.info(view, "导出成功: " + path + " (" + toExport.size() + " 条)", label);
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(view, "导出失败: " + e.getMessage(), "错误", JOptionPane.ERROR_MESSAGE);
+            ThemedDialogs.error(view, "导出失败: " + e.getMessage(), "错误");
         }
     }
 

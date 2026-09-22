@@ -28,6 +28,9 @@ public class AiPresenter {
     private final LlmProviderFactory providerFactory;
     private final LeveledLogger logger;
     private final com.flechazo.apisentinel.detection.OobService oobService;
+    /** Single login-profile manager shared across the internal Agent/Chat loops
+     *  and the MCP layer, so browser logins persist and are reusable everywhere. */
+    private final com.flechazo.apisentinel.config.LoginProfileManager loginProfileManager;
     private ApiSentinelTab view;
     private LearnedRuleEngine learnedRuleEngine;
     private com.flechazo.apisentinel.event.EventBus.Subscription analysisCompleteSub;
@@ -36,6 +39,8 @@ public class AiPresenter {
     private final AgentFacade agentFacade;
     private final ChatController chatController;
     private final BatchOrchestrator batchOrchestrator;
+    /** F-1: Browser service (null if disabled in config). */
+    private com.flechazo.apisentinel.browser.BrowserService browserService;
 
     public AiPresenter(MontoyaApi api, ConfigManager configManager,
                        ApiEntryTableModel tableModel, AnalysisTaskQueue analysisQueue,
@@ -49,6 +54,7 @@ public class AiPresenter {
         this.providerFactory = providerFactory;
         this.logger = logger;
         this.oobService = new com.flechazo.apisentinel.detection.OobService(api, configManager.getConfig(), logger);
+        this.loginProfileManager = new com.flechazo.apisentinel.config.LoginProfileManager(logger);
         this.oobService.setInteractionCallback(hits -> {
             for (var hit : hits) {
                 logger.info("[OOB] 确认漏洞: %s @ %s %s param=%s type=%s",
@@ -58,14 +64,13 @@ public class AiPresenter {
         });
         this.oobService.startBackgroundPolling(30_000);
         this.contextLookup = new AnalysisContextLookup(api, configManager, codeIndexService, logger);
-        this.pipelineFacade = new PipelineFacade(api, configManager, tableModel, analysisQueue, codeIndexService, logger);
-        // Cascade-hunting trigger chain: verified confirms flow from
-        // handlePipelineComplete to AgentController via the EventBus.
-        this.pipelineFacade.setEventBus(eventBus);
-        // Cross-endpoint vuln attribution: cluster-hunting runs confirm vulns
-        // on sibling endpoints; each must land on its own table row.
-        this.pipelineFacade.setRepository(tableModel.getRepository());
-        this.agentFacade = new AgentFacade(api, configManager, codeIndexService, analysisQueue, logger, pipelineFacade, oobService);
+        // Shared completion handler: both Pipeline and Agent delegate their
+        // post-analysis work (status, reports, SiteMap, cascade, etc.) here.
+        AnalysisCompletionHandler completionHandler = new AnalysisCompletionHandler(api, configManager, tableModel, logger);
+        completionHandler.setEventBus(eventBus);
+        completionHandler.setRepository(tableModel.getRepository());
+        this.pipelineFacade = new PipelineFacade(api, configManager, tableModel, analysisQueue, codeIndexService, logger, completionHandler);
+        this.agentFacade = new AgentFacade(api, configManager, codeIndexService, analysisQueue, logger, completionHandler, oobService);
         this.chatController = new ChatController(api, configManager, codeIndexService, providerFactory,
                 oobService, contextLookup, logger);
         // Claude-Code-style interaction: sandbox confirms and ask_user render
@@ -76,6 +81,31 @@ public class AiPresenter {
         this.agentFacade.setInteractionBridge(interactionBridge);
         this.agentFacade.setTableModel(tableModel);
         this.chatController.setInteractionBridge(interactionBridge);
+
+        // F-1: Initialize browser service if enabled in config
+        if (configManager.getConfig().isBrowserEnabled()) {
+            logger.debug("[Browser] 浏览器功能已启用");
+            com.flechazo.apisentinel.browser.BrowserService browserService =
+                    new com.flechazo.apisentinel.browser.BrowserService(logger, tableModel.getRepository());
+            browserService.configure(8080, configManager.getConfig().isBrowserHeadless(),
+                    configManager.getConfig().getBrowserChromePath().isEmpty()
+                            ? null : configManager.getConfig().getBrowserChromePath(),
+                    configManager.getConfig().getBrowserMaxPages());
+            browserService.setFrontendBaseUrl(configManager.getConfig().getBrowserFrontendUrl());
+            this.agentFacade.setBrowserService(browserService);
+            this.chatController.setBrowserService(browserService);
+            this.browserService = browserService;
+            logger.debug("[Browser] BrowserService 已注入 AgentFacade + ChatController");
+        } else {
+            logger.info("[F-1] 浏览器功能未启用 (browserEnabled=false)");
+        }
+        // F-1: Set repository for browser-discovered API registration
+        this.agentFacade.setRepository(tableModel.getRepository());
+        this.chatController.setRepository(tableModel.getRepository());
+        // Shared login-profile manager → browser_login works in Agent/Chat/MCP.
+        this.agentFacade.setLoginProfileManager(loginProfileManager);
+        this.chatController.setLoginProfileManager(loginProfileManager);
+
         this.batchOrchestrator = new BatchOrchestrator(tableModel, analysisQueue, providerFactory,
                 contextLookup, logger, this::routeAndExecute, tableModel.getRepository());
 
@@ -93,6 +123,24 @@ public class AiPresenter {
         return agentFacade::executeAgentForEntry;
     }
 
+    /** The live BrowserService (null when browser disabled / Chromium not ready),
+     *  so the MCP layer can expose browser tools to external clients. */
+    public com.flechazo.apisentinel.browser.BrowserService getBrowserService() {
+        return browserService;
+    }
+
+    /** Shared OOB collector — injected into the MCP layer so SSRF/blind tools
+     *  exposed over MCP correlate against the same background poller. */
+    public com.flechazo.apisentinel.detection.OobService getOobService() {
+        return oobService;
+    }
+
+    /** Shared login-profile manager — injected into the MCP layer so browser
+     *  logins done via the external brain persist and are reusable internally. */
+    public com.flechazo.apisentinel.config.LoginProfileManager getLoginProfileManager() {
+        return loginProfileManager;
+    }
+
     /** Unsubscribe EventBus listeners — call on extension unload. */
     public void shutdown() {
         if (analysisCompleteSub != null) {
@@ -104,6 +152,57 @@ public class AiPresenter {
         oobService.shutdown();
         pipelineFacade.shutdown();
         agentFacade.shutdown();
+        // F-1: Shutdown browser service to release Playwright resources
+        if (browserService != null) {
+            browserService.shutdown();
+        }
+    }
+
+    /**
+     * Reconfigure the browser service with new settings (headless, chromePath, etc.)
+     * without requiring a full extension reload. Called when the user changes
+     * browser config in the settings panel.
+     *
+     * <p>If browser was disabled at load time and is now being enabled, creates
+     * the BrowserService on demand (lazy initialization).
+     */
+    public void reconfigureBrowser(int burpProxyPort, boolean headless,
+                                    String chromePath, int maxPages, String frontendUrl) {
+        if (browserService != null) {
+            // Already initialized — reconfigure existing service
+            browserService.reconfigure(burpProxyPort, headless, chromePath, maxPages, frontendUrl);
+        } else {
+            // Browser was disabled at load time, now being enabled — create on demand
+            logger.info("[F-1] 浏览器功能在运行时启用，按需创建 BrowserService");
+            com.flechazo.apisentinel.browser.BrowserService newService =
+                    new com.flechazo.apisentinel.browser.BrowserService(logger, tableModel.getRepository());
+            newService.configure(burpProxyPort, headless,
+                    chromePath != null && !chromePath.isEmpty() ? chromePath : null, maxPages);
+            newService.setFrontendBaseUrl(frontendUrl);
+            this.browserService = newService;
+            this.agentFacade.setBrowserService(newService);
+            this.chatController.setBrowserService(newService);
+            logger.info("[F-1] BrowserService 已按需创建并注入 AgentFacade + ChatController");
+        }
+    }
+
+    /** Check if browser service is available (enabled and initialized). */
+    public boolean isBrowserAvailable() {
+        return browserService != null;
+    }
+
+    /** Shut down the browser service (called when user disables browser in settings). */
+    public void shutdownBrowser() {
+        if (browserService != null) {
+            logger.info("[F-1] 浏览器功能已禁用，关闭 BrowserService");
+            browserService.shutdown();
+            // Don't null out browserService — AgentFacade/ChatController still
+            // reference it. A reload will fully clear it. But set it to null
+            // so new Agent runs won't register browser tools.
+            this.browserService = null;
+            this.agentFacade.setBrowserService(null);
+            this.chatController.setBrowserService(null);
+        }
     }
 
     void setView(ApiSentinelTab view) {
@@ -128,6 +227,15 @@ public class AiPresenter {
     public void setMcpTools(com.flechazo.apisentinel.mcp.McpTools tools) {
         pipelineFacade.setMcpTools(tools);
     }
+
+    /** Toggle parallel (4 concurrent) vs serial (1) batch analysis. */
+    public void setBatchConcurrent(boolean parallel) {
+        batchOrchestrator.setBatchConcurrent(parallel);
+    }
+
+    /** Expose for multi-endpoint joint analysis trigger. */
+    public AgentFacade getAgentFacade() { return agentFacade; }
+    public LlmProvider getFirstAvailableProvider() { return providerFactory.getFirstAvailable(); }
 
     // === Delegation to ChatController ===
     public void onChatMessage(String message) { chatController.onChatMessage(message); }

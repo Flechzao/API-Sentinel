@@ -21,7 +21,19 @@ public class FuzzyMatchEngine implements MatchEngine {
         lock.readLock().lock();
         try {
             String searchText = (urlPath + (requestBody != null ? " " + requestBody : "")).toLowerCase();
-            return automaton.search(searchText);
+            List<ApiEntry> found = automaton.search(searchText);
+            // Prefer the MOST SPECIFIC (longest) matching pattern first.
+            // RPC-gateway APIs share one URL path and differ by a query/body
+            // param (e.g. InnerAction=GetDataservicePeeringReferencedProjects),
+            // so several registered action names are substrings of the same
+            // request. Without this sort, a shorter name (getDataServicePeering)
+            // would shadow a longer one (getDataservicePeeringReferencedProjects)
+            // and steal its traffic — the Aho-Corasick returns matches in
+            // text-discovery order, where the shorter prefix appears first.
+            found.sort((a, b) -> Integer.compare(
+                    PatternUtils.normalizePathForMatching(b.getApiPath()).length(),
+                    PatternUtils.normalizePathForMatching(a.getApiPath()).length()));
+            return found;
         } finally {
             lock.readLock().unlock();
         }
