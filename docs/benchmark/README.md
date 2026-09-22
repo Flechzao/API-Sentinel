@@ -59,7 +59,7 @@ cd /path/to/API-Sentinel
 # 2. 启动 easyshop-app（第一次会自动 mvn package）
 cd easyshop-app && mvn spring-boot:run
 # 或者用 jar（如果之前 package 过）：
-# java -jar target/vuln-app-1.0.0.jar
+# java -jar target/easyshop-1.0.0.jar
 
 # 保持这个终端开着，另开一个终端做下面的步骤
 
