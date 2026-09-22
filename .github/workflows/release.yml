@@ -51,10 +51,18 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      # 仓库没有 gradlew.bat，Windows runner 上统一用 bash（Git for Windows 自带）执行 ./gradlew。
-      - name: Build fat jar
+      # Unix 走 ./gradlew；Windows 必须走 gradlew.bat —— sh 版 wrapper 在 Windows 上
+      # 既有 CRLF shebang 问题，又有 MSYS 把 POSIX 路径递给 java.exe 的坑。
+      # .gitattributes 已保证 gradlew 检出为 LF、gradlew.bat 检出为 CRLF。
+      - name: Build fat jar (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: ./gradlew --no-daemon --console=plain shadowJar
+
+      - name: Build fat jar (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: gradlew.bat --no-daemon --console=plain shadowJar
 
       - name: Rename jar with platform suffix
         shell: bash

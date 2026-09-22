@@ -1,0 +1,16 @@
+# 行尾策略（Windows 构建必需）
+#
+# GitHub 的 windows runner checkout 时 core.autocrlf=true，会把 gradlew 写成 CRLF，
+# 于是 `#!/bin/sh\r` 在 bash 下直接报 "bad interpreter: /bin/sh^M" —— release 矩阵里
+# Windows job 就是这样挂掉的（actions/checkout#135 那类问题）。
+# 统一：仓库内一律 LF，检出时也保持 LF；只有 Windows 批处理强制 CRLF。
+* text=auto eol=lf
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：不参与行尾/编码转换
+*.jar binary
+*.png binary
+*.pdf binary
